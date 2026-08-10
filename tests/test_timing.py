@@ -228,3 +228,63 @@ def test_standalone_block_shape_matches():
         "governor_radiod", "client_radiod", "authority_utc_published",
     }
     assert set(block) == live_keys
+
+
+# ---------------------------------------------------------------------------
+# sysclock_timing_authority (host-clock instruments: mag-recorder etc.)
+# ---------------------------------------------------------------------------
+
+from hamsci_dsp.timing import sysclock_timing_authority
+
+# chronyc -c tracking, captured on AC0G-B4 2026-08-10 (FUSE, stratum 1)
+_B4_TRACKING = (
+    "46555345,FUSE,1,1786391861.237280040,0.000008532,0.000001637,"
+    "0.000003967,-82.096,0.000,0.004,0.001000000,0.000181586,32.0,Normal"
+)
+
+
+def test_sysclock_block_from_tracking_csv():
+    block = sysclock_timing_authority(tracking_csv=_B4_TRACKING)
+    assert block["source"] == "chrony-sysclock"
+    assert block["timing_source"] == "CHRONY_FUSE"
+    assert block["t_level_active"] == "T4"
+    assert block["stratum"] == 1
+    assert block["leap_status"] == "Normal"
+    # max-error bound: |offset| + root_dispersion + root_delay/2
+    expected_ns = int((0.000008532 + 0.000181586 + 0.001 / 2) * 1e9)
+    assert abs(block["sigma_ns"] - expected_ns) <= 1
+    assert block["system_time_offset_ns"] == 8532
+    # RTP-frame keys present-but-null so the record key stays uniform.
+    assert block["rtp_to_utc_offset_ns"] is None
+    assert block["governor_radiod"] is None
+
+
+def test_sysclock_block_key_superset_of_authority_block():
+    live_keys = set(standalone_timing_authority())
+    block = sysclock_timing_authority(tracking_csv=_B4_TRACKING)
+    assert live_keys <= set(block)
+
+
+def test_sysclock_not_synchronised():
+    csv = _B4_TRACKING.replace(",Normal", ",Not synchronised").replace(
+        "46555345,FUSE,1", "7F7F0101,,0"
+    )
+    block = sysclock_timing_authority(tracking_csv=csv)
+    assert block["source"] == "chrony-sysclock"
+    assert block["t_level_active"] is None
+    assert block["sigma_ns"] is None
+    assert block["leap_status"] == "Not synchronised"
+
+
+def test_sysclock_malformed_csv_falls_back():
+    block = sysclock_timing_authority(tracking_csv="not,a,tracking,line")
+    assert block["source"] == "sysclock-fallback"
+    assert block["t_level_active"] is None
+    assert block["sigma_ns"] is None
+
+
+def test_sysclock_chronyc_failure_falls_back():
+    def _boom(*a, **k):
+        raise OSError("chronyc missing")
+    block = sysclock_timing_authority(run_chronyc=_boom)
+    assert block["source"] == "sysclock-fallback"

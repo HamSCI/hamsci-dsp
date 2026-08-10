@@ -186,6 +186,96 @@ def standalone_timing_authority(
     }
 
 
+def sysclock_timing_authority(
+    tracking_csv: Optional[str] = None,
+    run_chronyc: Optional[Callable[[], str]] = None,
+    now_fn: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+) -> dict:
+    """Timing-provenance block for HOST-CLOCK instruments (sysclock frame).
+
+    For clients whose instrument is not radiod-sampled (e.g. mag-recorder's
+    RM3100 on USB-I2C) the RTP labelling invariant does not apply: samples
+    are stamped from the system clock, and this block records what that
+    clock was disciplined by at stamp time, so host-clock products carry
+    the same annotated-timing provenance as RTP-frame records.
+
+    The key set is a superset of AuthoritySnapshot.to_timing_authority():
+    the shared keys stay so consumers can treat the block uniformly; the
+    RTP-frame keys are present-but-null, and sysclock extras are added
+    (timing_source, stratum, leap_status, system_time_offset_ns,
+    rms_offset_ns).
+
+    Sourced from ``chronyc -c tracking`` (14-field CSV). ``sigma_ns`` is
+    chrony's worst-case error bound |offset| + root_dispersion +
+    root_delay/2 — a hard bound, not a 1-sigma. ``t_level_active`` is
+    "T4" whenever chrony reports itself synchronised (METROLOGY §4.5's
+    sysclock tier: "system clock chronyed"); adjudicating anything finer
+    is hf-timestd's job, not this helper's.
+
+    tracking_csv   inject the CSV line directly (tests); otherwise
+    run_chronyc    zero-arg callable returning the CSV (defaults to
+                   invoking ``chronyc -c tracking``, 2 s timeout).
+    All failure paths return the "sysclock-fallback" block — never raises.
+    """
+    fallback = {
+        **standalone_timing_authority(),
+        "source": "sysclock-fallback",
+        "timing_source": None,
+        "stratum": None,
+        "leap_status": None,
+        "system_time_offset_ns": None,
+        "rms_offset_ns": None,
+    }
+    if tracking_csv is None:
+        try:
+            if run_chronyc is not None:
+                tracking_csv = run_chronyc()
+            else:
+                import subprocess
+                tracking_csv = subprocess.run(
+                    ["chronyc", "-c", "tracking"],
+                    capture_output=True, text=True, timeout=2.0, check=True,
+                ).stdout
+        except Exception as e:  # noqa: BLE001 - any failure means "no chrony"
+            logger.debug("chronyc unavailable: %s", e)
+            return fallback
+
+    try:
+        fields = tracking_csv.strip().splitlines()[0].split(",")
+        # chronyc -c tracking: refid, refname, stratum, reftime, sysoffset,
+        # lastoffset, rmsoffset, freq, residfreq, skew, rootdelay, rootdisp,
+        # updateinterval, leap
+        if len(fields) < 14:
+            raise ValueError(f"expected 14 fields, got {len(fields)}")
+        refname = fields[1]
+        stratum = int(fields[2])
+        sys_offset = float(fields[4])
+        rms_offset = float(fields[6])
+        root_delay = float(fields[10])
+        root_disp = float(fields[11])
+        leap = fields[13]
+    except (ValueError, IndexError) as e:
+        logger.debug("unparseable chronyc tracking output: %s", e)
+        return fallback
+
+    synchronised = leap == "Normal"
+    return {
+        **standalone_timing_authority(),
+        "source": "chrony-sysclock",
+        "t_level_active": "T4" if synchronised else None,
+        "sigma_ns": (
+            int((abs(sys_offset) + root_disp + root_delay / 2.0) * 1e9)
+            if synchronised else None
+        ),
+        "authority_utc_published": now_fn().isoformat(),
+        "timing_source": f"CHRONY_{refname}" if refname else "CHRONY",
+        "stratum": stratum,
+        "leap_status": leap,
+        "system_time_offset_ns": int(sys_offset * 1e9),
+        "rms_offset_ns": int(rms_offset * 1e9),
+    }
+
+
 @dataclass(frozen=True)
 class AnchorUTC:
     """Result of :func:`acquire_anchor_utc` — the single RTP->UTC anchor a
