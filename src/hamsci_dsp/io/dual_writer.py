@@ -38,7 +38,14 @@ def make_data_product_writer(
     sole backend).
     """
     cfg = storage_config or {}
+    # An empty (or whitespace) value means UNSET, not "the empty path".
+    # Config templates document `sqlite_path = ""` as "use the default";
+    # taking that literally builds Path("") and hands sqlite3 something it
+    # cannot open, which is how the L3 physics service entered a restart
+    # loop the moment it was deployed on AC0G-B4 (2026-08-24).
     sqlite_path = cfg.get("sqlite_path")  # SqliteDataProductWriter has its own default
+    if isinstance(sqlite_path, str) and not sqlite_path.strip():
+        sqlite_path = None
 
     kwargs: Dict[str, Any] = dict(
         output_dir=output_dir,

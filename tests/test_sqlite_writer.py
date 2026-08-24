@@ -557,3 +557,65 @@ class TestSchemaMigration:
         finally:
             w_l2.close()
             w_l1.close()
+
+
+def test_empty_sqlite_path_means_unset_not_the_empty_path(tmp_path, monkeypatch):
+    """An empty string in config must fall back to the default DB.
+
+    A config template that documents `sqlite_path = ""` as "use the
+    default" met a factory that treated any non-None value as a path,
+    built `Path("")`, and handed sqlite3 something it cannot open.  On
+    AC0G-B4 that took the L3 physics service down in a restart loop the
+    moment it was deployed: `sqlite3.OperationalError: unable to open
+    database file`.  Empty means unset.
+    """
+    from hamsci_dsp.io import dual_writer
+
+    captured = {}
+
+    class _Spy:
+        def __init__(self, **kw):
+            captured.update(kw)
+
+    monkeypatch.setattr(dual_writer, "SqliteDataProductWriter", _Spy)
+    dual_writer.make_data_product_writer(
+        output_dir=tmp_path, product_level="L3", product_name="dtec",
+        channel="AGGREGATED", storage_config={"sqlite_path": ""},
+    )
+    assert "db_path" not in captured, (
+        f"empty sqlite_path leaked through as {captured.get('db_path')!r}")
+
+
+def test_whitespace_sqlite_path_is_also_unset(tmp_path, monkeypatch):
+    from hamsci_dsp.io import dual_writer
+
+    captured = {}
+
+    class _Spy:
+        def __init__(self, **kw):
+            captured.update(kw)
+
+    monkeypatch.setattr(dual_writer, "SqliteDataProductWriter", _Spy)
+    dual_writer.make_data_product_writer(
+        output_dir=tmp_path, product_level="L3", product_name="dtec",
+        channel="AGGREGATED", storage_config={"sqlite_path": "   "},
+    )
+    assert "db_path" not in captured
+
+
+def test_a_real_sqlite_path_is_still_honoured(tmp_path, monkeypatch):
+    from hamsci_dsp.io import dual_writer
+
+    captured = {}
+
+    class _Spy:
+        def __init__(self, **kw):
+            captured.update(kw)
+
+    monkeypatch.setattr(dual_writer, "SqliteDataProductWriter", _Spy)
+    dual_writer.make_data_product_writer(
+        output_dir=tmp_path, product_level="L3", product_name="dtec",
+        channel="AGGREGATED",
+        storage_config={"sqlite_path": str(tmp_path / "x.db")},
+    )
+    assert captured["db_path"] == tmp_path / "x.db"
