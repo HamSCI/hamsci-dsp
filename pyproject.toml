@@ -42,8 +42,9 @@ geomag = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-# GIRO ionosonde fallback table for hamsci_dsp.ionosphere.data_service.
-hamsci_dsp = ["data/*.tsv"]
+# GIRO ionosonde fallback table for hamsci_dsp.ionosphere.data_service,
+# and the L1/L2/L3 data-product schema registry (split §5.2 data layer).
+hamsci_dsp = ["data/*.tsv", "schemas/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
