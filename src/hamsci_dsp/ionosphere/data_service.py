@@ -383,6 +383,7 @@ class IonoDataService:
         home_lat: Optional[float] = None,
         home_lon: Optional[float] = None,
         enable_iri_fallback: bool = True,
+        iri_ionex_dir: Optional[Path] = None,
     ):
         if cache_dir is None:
             import tempfile
@@ -397,6 +398,9 @@ class IonoDataService:
         # blended on top. Falls back to the crude internal climatology when
         # IRI/PHaRLAP is unavailable.
         self.enable_iri_fallback = enable_iri_fallback
+        # Optional IONEX directory for the lazily-built IRI fallback model
+        # (DI: the consuming client supplies its path; None disables).
+        self.iri_ionex_dir = iri_ionex_dir
         self._iri_model = None          # lazily constructed IonosphericModel
         self._iri_unavailable = False   # latch: stop retrying a missing IRI
 
@@ -1518,7 +1522,8 @@ class IonoDataService:
         if self._iri_model is None:
             try:
                 from hamsci_dsp.ionosphere.model import IonosphericModel
-                self._iri_model = IonosphericModel(enable_iri=True)
+                self._iri_model = IonosphericModel(
+                    enable_iri=True, ionex_dir=self.iri_ionex_dir)
             except Exception as e:
                 logger.info(
                     "IRI-2020 base model unavailable (%s) — using parametric "
