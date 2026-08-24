@@ -38,9 +38,18 @@ def test_parametric_ionosphere_day_vs_night():
 
 
 def test_raytrace_absent_is_graceful():
-    eng = RaytraceEngine()
-    # PHaRLAP/PyLAP not installed in this environment.
-    if not eng.is_available():
-        assert eng.compute_modes() == []
+    # The split (§5.2) replaced the stub with hf-timestd's engine; the
+    # property this test protects is unchanged — no PHaRLAP/PyLAP means
+    # graceful degradation, never a raise — but it is now expressed
+    # against the real API: cheap coordinate-less construction, and a
+    # geometric (vacuum-delay) fallback result when unavailable.
+    eng = RaytraceEngine()          # constructs without a receiver
+    assert eng.is_available() in (True, False)
+
+    located = RaytraceEngine(receiver_lat=40.0, receiver_lon=-95.0)
+    if not located.is_available():
+        res = located.compute_modes(
+            "WWV", 10.0, datetime(2026, 3, 15, 12, 0, tzinfo=timezone.utc))
+        assert res is not None      # geometric fallback, not an exception
     else:                                    # pragma: no cover
         pytest.skip("pylap present; live trace not exercised here")
