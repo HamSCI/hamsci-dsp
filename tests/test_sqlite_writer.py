@@ -2,7 +2,7 @@
 
 Phase 1 of the HDF5 → SQLite migration. See
 ``docs/HDF5-TO-SQLITE-MIGRATION.md`` and
-``src/hf_timestd/io/sqlite_writer.py``.
+``src/hamsci_dsp/io/sqlite_writer.py``.
 
 Mirrors the structure of ``test_hdf5_io.py`` so any future
 refactoring that touches both writers can keep them in lockstep.
