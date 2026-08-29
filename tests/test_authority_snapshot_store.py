@@ -412,5 +412,25 @@ class TestFrontendOperatingPoint(unittest.TestCase):
             self.assertEqual(declared["rf_agc"], "INTEGER")
 
 
+class TestFoldTelemetry(unittest.TestCase):
+    def test_fold_telemetry_columns_round_trip(self):
+        """One bad batch discards a whole 30 s fold block. Nothing read
+        blocks_discarded, so how often drops cost T6 an estimate was
+        unknown -- and unmeasurable after the fact."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "auth.db"
+            with AuthoritySnapshotStore(path) as store:
+                store.insert(_full_snapshot(
+                    t6_fold_blocks_discarded=7, t6_fold_seconds=30,
+                ))
+            with sqlite3.connect(str(path)) as conn:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    "SELECT * FROM authority_snapshot"
+                ).fetchone()
+            self.assertEqual(row["t6_fold_blocks_discarded"], 7)
+            self.assertEqual(row["t6_fold_seconds"], 30)
+
+
 if __name__ == "__main__":
     unittest.main()

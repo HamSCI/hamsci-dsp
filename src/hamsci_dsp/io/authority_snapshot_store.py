@@ -137,6 +137,13 @@ COLUMNS = (
     "t6_baseband_power",    # dBm, T6 channel power (signal + noise)
     "t6_n0",                # dBm/Hz, T6 channel noise density
                             #   C/N0 = t6_baseband_power - t6_n0
+
+    # --- T6 fold telemetry (spec T6_FOLDED_SELF_ACQUISITION §5) ---
+    # One batch whose registration disagrees discards a whole fold block,
+    # and three missed blocks trips estimate_stale.  Recorded so drop
+    # tolerance is built on measurement rather than on assumption.
+    "t6_fold_blocks_discarded",
+    "t6_fold_seconds",
 )
 
 
@@ -165,6 +172,8 @@ _INT_COLUMNS = frozenset({
     "t4_available",
     "t3_available",
     "rf_agc",
+    "t6_fold_blocks_discarded",
+    "t6_fold_seconds",
 })
 _REAL_COLUMNS = frozenset({
     "t6_offset_ms",
