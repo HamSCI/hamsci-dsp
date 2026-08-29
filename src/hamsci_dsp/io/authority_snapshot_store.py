@@ -144,6 +144,15 @@ COLUMNS = (
     # tolerance is built on measurement rather than on assumption.
     "t6_fold_blocks_discarded",
     "t6_fold_seconds",
+
+    # --- T6 fine-stage acquisition (spec T6_FOLDED_SELF_ACQUISITION §8) ---
+    # Which search mode produced the estimate ("seeded" / "tracking" /
+    # "bootstrap") and whether the fine_coarse cross-check ran at all.
+    # §8's verification is "T6 held on folded estimates alone"; without
+    # these, a night held with no matched-filter witness looks exactly
+    # like a night held with one.  NULL on producers older than this.
+    "t6_fine_search_mode",
+    "t6_fine_coarse_unverified",
 )
 
 
@@ -174,6 +183,7 @@ _INT_COLUMNS = frozenset({
     "rf_agc",
     "t6_fold_blocks_discarded",
     "t6_fold_seconds",
+    "t6_fine_coarse_unverified",
 })
 _REAL_COLUMNS = frozenset({
     "t6_offset_ms",

@@ -432,5 +432,66 @@ class TestFoldTelemetry(unittest.TestCase):
             self.assertEqual(row["t6_fold_seconds"], 30)
 
 
+class TestFineAcquisitionTelemetry(unittest.TestCase):
+    """T6_FOLDED_SELF_ACQUISITION §8 asks to prove T6 held "on folded
+    estimates alone".  Without these two columns a night spent
+    AUTHORITATIVE without the matched-filter witness is
+    indistinguishable in the archive from one spent with it."""
+
+    def test_search_mode_and_unverified_round_trip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "auth.db"
+            with AuthoritySnapshotStore(path) as store:
+                store.insert(_full_snapshot(
+                    t6_fine_search_mode="bootstrap",
+                    t6_fine_coarse_unverified=1,
+                ))
+            with sqlite3.connect(str(path)) as conn:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    "SELECT * FROM authority_snapshot"
+                ).fetchone()
+            self.assertEqual(row["t6_fine_search_mode"], "bootstrap")
+            self.assertEqual(row["t6_fine_coarse_unverified"], 1)
+
+    def test_column_types(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "auth.db"
+            with AuthoritySnapshotStore(path):
+                pass
+            with sqlite3.connect(str(path)) as conn:
+                declared = {
+                    r[1]: r[2] for r in conn.execute(
+                        "PRAGMA table_info(authority_snapshot)"
+                    )
+                }
+        self.assertEqual(declared["t6_fine_search_mode"], "TEXT")
+        self.assertEqual(declared["t6_fine_coarse_unverified"], "INTEGER")
+
+    def test_an_old_db_is_migrated_forward(self):
+        """Operators carry authority_history.db across upgrades; a
+        missing column would silently fail every INSERT."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "auth.db"
+            with sqlite3.connect(str(path)) as conn:
+                conn.execute(
+                    "CREATE TABLE authority_snapshot ("
+                    "utc_published TEXT NOT NULL PRIMARY KEY, "
+                    "t_level_active TEXT)"
+                )
+            with AuthoritySnapshotStore(path) as store:
+                store.insert(_full_snapshot(
+                    t6_fine_search_mode="tracking",
+                    t6_fine_coarse_unverified=0,
+                ))
+            with sqlite3.connect(str(path)) as conn:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    "SELECT * FROM authority_snapshot"
+                ).fetchone()
+            self.assertEqual(row["t6_fine_search_mode"], "tracking")
+            self.assertEqual(row["t6_fine_coarse_unverified"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()
