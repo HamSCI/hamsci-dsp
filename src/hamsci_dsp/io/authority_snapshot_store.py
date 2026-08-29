@@ -121,6 +121,22 @@ COLUMNS = (
     "t3_offset_ms",
     "t3_sigma_ms",
     "t3_kalman_state",
+    # --- Receiver operating point (FrontendProbe) ---
+    # radiod's RX888 AGC adjusts the analog front-end gain once per
+    # second from TOTAL 0-64.8 MHz power, which is dominated by
+    # shortwave broadcast far from any timing pilot.  radiod digitally
+    # undoes the level change (scale_AD), so the recorded signal level
+    # is unaffected -- but the noise floor beneath it is not: measured
+    # 0.52 dB of T6 C/N0 per dB of gain on B4 (2026-08-28, gain +11.9
+    # to -4.2 across one evening).  Storing the operating point beside
+    # the measurement is what makes a T6 residual attributable to it
+    # afterwards.  NULL whenever the probe is absent or the poll failed.
+    "rf_gain",              # dB, AD8370 VGA setting
+    "rf_agc",               # 0/1, whether radiod is steering it
+    "if_power",             # dBFS, A/D level (the AGC's own input)
+    "t6_baseband_power",    # dBm, T6 channel power (signal + noise)
+    "t6_n0",                # dBm/Hz, T6 channel noise density
+                            #   C/N0 = t6_baseband_power - t6_n0
 )
 
 
@@ -148,6 +164,7 @@ _INT_COLUMNS = frozenset({
     "t5_pps_utc_sec",
     "t4_available",
     "t3_available",
+    "rf_agc",
 })
 _REAL_COLUMNS = frozenset({
     "t6_offset_ms",
@@ -162,6 +179,10 @@ _REAL_COLUMNS = frozenset({
     "t4_sigma_ms",
     "t3_offset_ms",
     "t3_sigma_ms",
+    "rf_gain",
+    "if_power",
+    "t6_baseband_power",
+    "t6_n0",
 })
 
 

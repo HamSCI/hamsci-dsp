@@ -363,5 +363,54 @@ class TestForwardMigration(unittest.TestCase):
             self.assertIn("future_v3_only_column", post_cols)
 
 
+class TestFrontendOperatingPoint(unittest.TestCase):
+    """radiod's RX888 AGC moves the analog front-end gain on its own
+    1 Hz schedule, and every dB of it moves the T6 pilot's C/N0 (measured
+    0.52 dB/dB on B4, 2026-08-28).  Unless the operating point is stored
+    beside the measurement it qualifies, no T6 residual can be attributed
+    to it after the fact.
+    """
+
+    def test_frontend_operating_point_columns_round_trip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "auth.db"
+            with AuthoritySnapshotStore(path) as store:
+                store.insert(_full_snapshot(
+                    rf_gain=11.9,
+                    rf_agc=1,
+                    if_power=-19.52,
+                    t6_baseband_power=-99.08,
+                    t6_n0=-156.07,
+                ))
+            with sqlite3.connect(str(path)) as conn:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    "SELECT * FROM authority_snapshot"
+                ).fetchone()
+            self.assertAlmostEqual(row["rf_gain"], 11.9)
+            self.assertEqual(row["rf_agc"], 1)
+            self.assertAlmostEqual(row["if_power"], -19.52)
+            self.assertAlmostEqual(row["t6_baseband_power"], -99.08)
+            self.assertAlmostEqual(row["t6_n0"], -156.07)
+
+    def test_frontend_levels_declared_real_and_agc_integer(self):
+        """Levels must be REAL, not TEXT: a dB value stored as a string
+        sorts and averages wrongly, which is exactly what a correlation
+        query does with them."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "auth.db"
+            AuthoritySnapshotStore(path).close()
+            with sqlite3.connect(str(path)) as conn:
+                declared = {
+                    r[1]: r[2] for r in conn.execute(
+                        "PRAGMA table_info(authority_snapshot)"
+                    )
+                }
+            for column in ("rf_gain", "if_power",
+                           "t6_baseband_power", "t6_n0"):
+                self.assertEqual(declared[column], "REAL", column)
+            self.assertEqual(declared["rf_agc"], "INTEGER")
+
+
 if __name__ == "__main__":
     unittest.main()
