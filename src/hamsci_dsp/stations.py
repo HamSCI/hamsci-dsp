@@ -26,6 +26,11 @@ class Station:
     lon: float
     frequencies_mhz: Tuple[float, ...]
     description: str = ""
+    #: Whether the station still transmits.  A ceased station stays in
+    #: the catalogue so historical data referencing it keeps resolving,
+    #: and is excluded from anything predicting a signal that could be
+    #: received now.
+    active: bool = True
 
     @property
     def coordinates(self) -> Tuple[float, float]:
@@ -43,6 +48,14 @@ class StationCatalog:
         # Populate the lookup dict on the frozen instance.
         object.__setattr__(
             self, "_by_name", {s.name: s for s in self.stations})
+
+    def active_stations(self) -> Tuple["Station", ...]:
+        """Stations still transmitting — what any live prediction wants.
+
+        ``get()`` deliberately still returns retired stations, so archived
+        measurements naming them continue to resolve.
+        """
+        return tuple(s for s in self.stations if s.active)
 
     def get(self, name: str) -> Station:
         return self._by_name[name]
@@ -74,7 +87,8 @@ BUILTIN_CATALOG = StationCatalog((
     Station(
         name="CHU", lat=45.2953, lon=-75.7544,
         frequencies_mhz=(3.33, 7.85, 14.67),
-        description="Ottawa, ON, Canada",
+        description="Ottawa, ON, Canada (ceased transmitting)",
+        active=False,
     ),
     Station(
         name="BPM", lat=34.9489, lon=109.5430,

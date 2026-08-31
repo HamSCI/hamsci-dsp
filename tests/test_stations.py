@@ -78,3 +78,30 @@ class TestBackCompatShapes:
         ))
         assert cat.get("TEST").lon == 2.0
         assert set(cat.names()) == {"TEST"}
+
+
+class TestRetiredStations:
+    """A station that has ceased transmitting must not be a candidate.
+
+    CHU (NRC Ottawa) no longer exists, so nothing should predict a signal
+    from it.  The entry is kept -- historical data referencing CHU must
+    still resolve -- and marked inactive, so live calculations skip it
+    while archives stay readable.
+    """
+
+    def test_chu_is_marked_inactive(self):
+        from hamsci_dsp.stations import BUILTIN_CATALOG
+        chu = BUILTIN_CATALOG.get("CHU")
+        assert chu is not None, "the entry must survive for historical data"
+        assert chu.active is False
+
+    def test_the_operating_stations_are_active(self):
+        from hamsci_dsp.stations import BUILTIN_CATALOG
+        for name in ("WWV", "WWVH", "BPM"):
+            assert BUILTIN_CATALOG.get(name).active is True
+
+    def test_active_stations_excludes_chu(self):
+        from hamsci_dsp.stations import BUILTIN_CATALOG
+        names = {s.name for s in BUILTIN_CATALOG.active_stations()}
+        assert "CHU" not in names
+        assert {"WWV", "WWVH", "BPM"} <= names
