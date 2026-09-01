@@ -11,7 +11,7 @@ PHYSICS, not against HISTORY.
 
 Before the radio is turned on, we know:
 1. Receiver location (lat/lon)
-2. Station locations (WWV, WWVH, CHU, BPM)
+2. Station locations (WWV, WWVH, BPM)
 3. Great circle distances
 4. IRI-2020 ionospheric model predictions
 5. Frequency-dependent propagation characteristics
@@ -135,7 +135,6 @@ SAMPLES_PER_MINUTE = DEFAULT_SAMPLE_RATE * 60  # 1,440,000
 STATION_LOCATIONS = {
     'WWV': (40.6781, -105.0469),   # Fort Collins, Colorado
     'WWVH': (21.9886, -159.7642),  # Kekaha, Kauai, Hawaii
-    'CHU': (45.2950, -75.7533),    # Ottawa, Canada
     'BPM': (34.9500, 109.5500),    # Pucheng, China
 }
 
@@ -157,7 +156,6 @@ STATION_LOCATIONS = {
 STATION_FREQUENCIES = {
     'WWV': [2.5, 5.0, 10.0, 15.0, 20.0, 25.0],
     'WWVH': [2.5, 5.0, 10.0, 15.0],
-    'CHU': [3.33, 7.85, 14.67],
     'BPM': [2.5, 5.0, 10.0, 15.0],
 }
 
@@ -167,13 +165,15 @@ DEFAULT_UNCERTAINTY_3SIGMA_MS = 15.0  # ±15ms covers most ionospheric variation
 
 # Per-station minimum uncertainty floors (3-sigma).
 # The IRI model is well-calibrated for WWV/WWVH (Colorado/Hawaii, well-studied
-# paths) but has a systematic ~70ms error for CHU (Ottawa→Missouri, ~2200km).
+# paths); longer paths carry more model error and need a wider floor.
 # These floors prevent the physics gate from rejecting valid detections when
 # the model prediction is off by more than the default ±15ms.
+#
+# CHU carried a 100 ms floor here for the Ottawa→Missouri path, where IRI ran
+# ~70 ms out.  It ceased transmitting; see tests/test_retired_stations_cost_nothing.py.
 STATION_MIN_UNCERTAINTY_3SIGMA_MS = {
     'WWV':  15.0,   # Colorado, well-calibrated IRI path
     'WWVH': 15.0,   # Hawaii, well-calibrated IRI path
-    'CHU':  100.0,  # Ottawa→Missouri: IRI off by ~70ms, need ±100ms floor
     'BPM':  50.0,   # China, longer path with larger model uncertainty
 }
 
@@ -581,7 +581,7 @@ class ArrivalPatternMatrix:
         delay predictions for subsequent detections.
         
         Args:
-            station: Station name (WWV, WWVH, CHU, BPM)
+            station: Station name (WWV, WWVH, BPM)
             tec_tecu: Measured TEC in TECU (10^16 electrons/m²)
             timestamp: Unix timestamp of measurement (default: now)
         """
@@ -1180,8 +1180,8 @@ class ArrivalPatternMatrix:
             adaptive_3sigma_ms = tracked_uncertainty_ms
 
         # Apply per-station minimum floor: IRI model accuracy varies by path.
-        # CHU (Ottawa→Missouri) has a systematic ~70ms model error; without a
-        # wider floor the physics gate rejects all valid CHU detections.
+        # Long paths carry systematic model error; without a wider floor the
+        # physics gate rejects valid detections on them.
         station_floor_ms = STATION_MIN_UNCERTAINTY_3SIGMA_MS.get(station, DEFAULT_UNCERTAINTY_3SIGMA_MS)
         adaptive_3sigma_ms = max(adaptive_3sigma_ms, station_floor_ms)
 
@@ -1340,7 +1340,7 @@ class ArrivalPatternMatrix:
         Validate a detection against the expected arrival matrix.
         
         Args:
-            station: Station name (WWV, WWVH, CHU, BPM)
+            station: Station name (WWV, WWVH, BPM)
             frequency_mhz: Frequency in MHz
             detected_sample: Detected sample offset from minute boundary
             snr_db: Signal-to-noise ratio in dB
@@ -1468,7 +1468,7 @@ class ArrivalPatternMatrix:
         logger.info(f"  Receiver: ({matrix.receiver_lat:.4f}, {matrix.receiver_lon:.4f})")
         logger.info(f"  Model: {matrix.ionospheric_model_tier} | Source: {matrix.data_source} | Confidence: {matrix.model_confidence:.2f}")
         
-        for station in ['WWV', 'WWVH', 'CHU', 'BPM']:
+        for station in ['WWV', 'WWVH', 'BPM']:
             arrivals = matrix.get_station_arrivals(station)
             if arrivals:
                 parts = []

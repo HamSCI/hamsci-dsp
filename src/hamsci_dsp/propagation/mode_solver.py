@@ -81,7 +81,6 @@ from hamsci_dsp.stations import BUILTIN_CATALOG as _CATALOG
 
 WWV_LAT, WWV_LON = _CATALOG.get('WWV').coordinates
 WWVH_LAT, WWVH_LON = _CATALOG.get('WWVH').coordinates
-CHU_LAT, CHU_LON = _CATALOG.get('CHU').coordinates
 BPM_LAT, BPM_LON = _CATALOG.get('BPM').coordinates
 from hamsci_dsp.geometry import hop_geometry
 
@@ -102,7 +101,6 @@ F2_LAYER_HEIGHT_KM = 300.0  # Primary HF reflection layer
 STATION_LOCATIONS = {
     'WWV': (WWV_LAT, WWV_LON),     # Fort Collins, Colorado - NIST verified
     'WWVH': (WWVH_LAT, WWVH_LON),  # Kekaha, Kauai, Hawaii - NIST verified
-    'CHU': (CHU_LAT, CHU_LON),     # Ottawa, Canada - NRC verified
     'BPM': (BPM_LAT, BPM_LON),     # Pucheng, China - NTSC verified
 }
 
@@ -345,7 +343,7 @@ class PropagationModeSolver:
         logger.info(
             f"Distances: WWV={self._distances.get('WWV', 0):.0f} km, "
             f"WWVH={self._distances.get('WWVH', 0):.0f} km, "
-            f"CHU={self._distances.get('CHU', 0):.0f} km"
+            f"BPM={self._distances.get('BPM', 0):.0f} km"
         )
     
     def _grid_to_latlon(self, grid: str) -> Tuple[float, float]:
@@ -546,7 +544,7 @@ class PropagationModeSolver:
         Tier-2: Fixed F2/E layer heights with parametric iono delay (fallback).
 
         Args:
-            station: Station name ('WWV', 'WWVH', 'CHU')
+            station: Station name ('WWV', 'WWVH')
             frequency_mhz: Signal frequency in MHz
             max_hops: Maximum number of hops to consider (tier-2 only)
             include_e_layer: Whether to include E-layer modes (tier-2 only)
