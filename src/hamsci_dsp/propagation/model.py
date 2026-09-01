@@ -79,6 +79,7 @@ It depends on:
 
 import logging
 import math
+import time as _time
 from datetime import datetime, timezone
 from typing import Optional, Dict, List, Tuple, NamedTuple
 from dataclasses import dataclass, field
@@ -108,6 +109,32 @@ K_GROUP_DELAY = 40.3             # Group delay constant (m³/s²)
 # K = e² / (8π²ε₀mₑ) = 40.3 m³/s²
 # Group delay excess = K * sTEC / (c * f²)  [seconds]
 # where sTEC in el/m², f in Hz
+
+# Where the straight-ray picture stops holding (M-M34).
+#
+# `_integrate_group_delay` accumulates (n_g - 1) ds along a straight line.
+# That model describes a ray that keeps going, so it holds only while the
+# signal frequency stays well clear of the local plasma frequency.  As
+# fp²/f² approaches 1 the group index diverges, and the integral then
+# reports whichever cell happens to sit just under the turning point
+# rather than anything about the ionosphere.  Halve the altitude step and
+# the answer moves.
+#
+# Stop at the ratio where the code already switched formulas.  A real ray
+# turns above this height; Breit-Tuve puts its group path at the
+# free-space distance to the virtual reflection height, and the hop
+# geometry in `_evaluate_mode` already carries that.  Integrating past the
+# turning point double-counts the retardation and then diverges on top.
+GROUP_INDEX_RATIO_MAX = 0.5      # fp²/f² ceiling for the straight-ray integral
+
+# A generous upper bound on F2 virtual height at oblique incidence (M-M34).
+# Ionograms put h'F2 below this even near the MUF, so a sky-wave that
+# claims to arrive later than the free-space path to 500 km has left
+# physics behind whatever the ionospheric term says.
+MAX_VIRTUAL_HEIGHT_KM = 500.0
+
+# How often one (mode, frequency) may report a ceiling breach.
+_CEILING_WARN_INTERVAL_S = 300.0
 
 
 # =============================================================================
@@ -147,6 +174,12 @@ class ModeArrival:
     slant_tec_tecu: float = 0.0   # Slant TEC along path
     foF2_MHz: float = 0.0         # F2 critical frequency (for MUF check)
     muf_MHz: float = 0.0          # Maximum usable frequency for this mode
+
+    # M-M34: the arrival lands later than any reflection off a layer at
+    # MAX_VIRTUAL_HEIGHT_KM could put it, so the model failed on this mode.
+    # Reported, not acted on — no consumer reads it yet, and the delay above
+    # stays exactly as the model produced it.
+    exceeds_group_path_ceiling: bool = False
 
     @property
     def uncertainty_3sigma_ms(self) -> float:
@@ -278,6 +311,10 @@ class HFPropagationModel:
         # ionospheric fallback model. UT1 = UTC + DUT1 gives the correct Earth
         # rotation angle. Typical magnitude: ±0.9s, updated via set_dut1().
         self._dut1_seconds: float = 0.0
+
+        # M-M34 group-path ceiling bookkeeping.
+        self._ceiling_clamps: int = 0
+        self._ceiling_warned: Dict[Tuple[str, float], float] = {}
         
         logger.info(f"HFPropagationModel initialized at ({receiver_lat:.4f}, {receiver_lon:.4f})")
     
@@ -701,7 +738,51 @@ class HFPropagationModel:
         )
         
         total_delay_ms = geometric_delay_ms + iono_delay_ms
-        
+
+        # M-M34: a reflected sky-wave still has to come back down.
+        #
+        # Breit-Tuve puts the group path at the free-space distance to the
+        # virtual reflection height, so `n_hops` reflections off a layer no
+        # higher than MAX_VIRTUAL_HEIGHT_KM bound the arrival however large
+        # the ionospheric term grows.  Truncating the integral already keeps
+        # the profile path inside that bound on every band B4 receives; this
+        # check watches the paths the truncation does not reach — the TEC
+        # fallback in `_tec_group_delay`, which maps VTEC by 1/sin(elevation)
+        # and overruns badly at grazing incidence, and whatever profile
+        # source arrives next.
+        #
+        # It reports and does not rewrite the number.  Clamping looked
+        # tempting and turns out to corrupt the science it meant to protect:
+        # `compute_differential_delay` inverts the 1/f² spread between two
+        # frequencies to recover slant TEC, so pinning both frequencies to a
+        # shared ceiling collapses that spread to zero and the TEC with it.
+        # A prediction that trips this bound has failed, and saying so beats
+        # publishing a plausible-looking substitute.
+        half_hop_km = distance_km / (2.0 * n_hops)
+        ceiling_ms = (
+            2.0 * n_hops * math.hypot(half_hop_km, MAX_VIRTUAL_HEIGHT_KM)
+            / C_LIGHT_KM_MS
+        )
+        exceeds_ceiling = total_delay_ms > ceiling_ms
+        if exceeds_ceiling:
+            # Rate-limit the report.  Six metrology channels predicting every
+            # minute would bury the journal of a station nobody can reach
+            # until late September.
+            self._ceiling_clamps += 1
+            key = (getattr(mode, 'label', str(mode)), round(frequency_mhz, 3))
+            now = _time.monotonic()
+            if now - self._ceiling_warned.get(key, -1e9) >= _CEILING_WARN_INTERVAL_S:
+                self._ceiling_warned[key] = now
+                logger.warning(
+                    "%s %dhop @ %.1f MHz: predicted %.2f ms exceeds the %.2f ms "
+                    "group-path ceiling for a %.0f km virtual height "
+                    "(geometric %.2f, ionospheric %.2f) — the model has failed "
+                    "here [%d such predictions so far]",
+                    key[0], n_hops, frequency_mhz, total_delay_ms, ceiling_ms,
+                    MAX_VIRTUAL_HEIGHT_KM, geometric_delay_ms, iono_delay_ms,
+                    self._ceiling_clamps,
+                )
+
         # Uncertainty estimate (1-sigma)
         uncertainty_1sigma_ms = self._estimate_uncertainty(
             mode=mode,
@@ -723,6 +804,7 @@ class HFPropagationModel:
             slant_tec_tecu=iono_params.get('TEC_TECU', 0.0),
             foF2_MHz=foF2,
             muf_MHz=muf,
+            exceeds_group_path_ceiling=exceeds_ceiling,
         )
     
     def _compute_iono_delay(
@@ -820,24 +902,34 @@ class HFPropagationModel:
             if Ne_avg <= 0:
                 continue
             
-            # Check if frequency is above local plasma frequency
+            # Local plasma frequency, squared.
             fp_sq = Ne_avg * E_CHARGE**2 / (4 * math.pi**2 * EPSILON_0 * E_MASS)
-            if fp_sq >= freq_sq:
-                # Signal is reflected — this is the reflection point
-                # For group delay calculation, we integrate up to here
+
+            # M-M34: stop where the straight ray stops describing the signal.
+            #
+            # This used to run right up to fp² >= f² and, for the last
+            # stretch below it, evaluate the full 1/sqrt(1 - ratio) - 1.
+            # That expression diverges at the turning point, so the delay
+            # it returned tracked the altitude grid instead of the
+            # ionosphere: one 5 km cell at ratio 0.980 contributed 1.7 ms
+            # on its own.  Measured on B4 2026-08-31 with foF2 near 9.97
+            # MHz, WWV at 10 MHz came back at 9.03 ms against a 3.74 ms
+            # great-circle free-space time, and WWVH at 46.67 against
+            # 22.05.  Every band whose frequency sat just under foF2
+            # roughly doubled; the bands above it stayed sane.
+            #
+            # Above this ratio the ray refracts and turns.  The virtual
+            # reflection height in `_evaluate_mode` already accounts for
+            # that retardation, so the integral hands the turning region
+            # back to the geometry rather than diverging inside it.
+            ratio = fp_sq / freq_sq if freq_sq > 0 else float('inf')
+            if ratio >= GROUP_INDEX_RATIO_MAX:
                 break
-            
-            # Group delay excess per unit path length
-            # Δn_g = 0.5 * fp² / f² (first-order approximation)
-            # More accurate: 1/sqrt(1 - fp²/f²) - 1
-            ratio = fp_sq / freq_sq
-            if ratio < 0.5:
-                # First-order approximation (good for f >> fp)
-                dn_g = 0.5 * ratio
-            else:
-                # Full expression (near reflection)
-                dn_g = 1.0 / math.sqrt(1.0 - ratio) - 1.0
-            
+
+            # First-order group index excess, valid while f stays clear of
+            # the plasma frequency: Δn_g = 0.5 * fp² / f².
+            dn_g = 0.5 * ratio
+
             # Altitude-dependent obliquity (thin-shell mapping function)
             # M(h) = 1 / sqrt(1 - (R*cos(e)/(R+h))²)
             # More accurate than constant 1/sin(e), especially at low elevations
