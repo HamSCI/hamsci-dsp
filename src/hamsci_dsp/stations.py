@@ -14,7 +14,7 @@ state.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Tuple
+from typing import Dict, Mapping, Tuple
 
 __all__ = ["Station", "StationCatalog", "BUILTIN_CATALOG"]
 
@@ -32,10 +32,42 @@ class Station:
     #: received now.
     active: bool = True
 
+    #: Where this station's position came from, and when it was read.  A
+    #: coordinate nobody can re-check is a coordinate nobody should trust:
+    #: WWV's position sat wrong in several tables for a long time precisely
+    #: because no entry recorded what it was supposed to be.
+    source: str = ""
+    source_retrieved: str = ""
+
+    #: Per-frequency transmitting antenna positions, {MHz: (lat, lon)}, for
+    #: stations whose operator publishes them.  NIST does for WWVH, where the
+    #: four antennas sit up to ~50 m apart along the path from Missouri.  It
+    #: publishes only a site coordinate for WWV, so WWV has none here — an
+    #: uncited per-frequency table is not evidence.
+    antennas: Mapping[float, Tuple[float, float]] = field(default_factory=dict)
+
     @property
     def coordinates(self) -> Tuple[float, float]:
         """(lat, lon) — the tuple shape wwv_constants consumers read."""
         return (self.lat, self.lon)
+
+    def antenna_for(self, frequency_mhz: float) -> Tuple[float, float]:
+        """The antenna that actually radiates this frequency.
+
+        Falls back to the site coordinate when the operator publishes no
+        per-frequency position, or for a frequency outside the published
+        set.  Every metrology channel is one frequency, so a channel can ask
+        for the antenna it is actually listening to.
+        """
+        if not self.antennas:
+            return self.coordinates
+        f = float(frequency_mhz)
+        if f in self.antennas:
+            return self.antennas[f]
+        for key, pos in self.antennas.items():
+            if abs(key - f) < 1e-6:
+                return pos
+        return self.coordinates
 
 
 @dataclass(frozen=True)
@@ -78,11 +110,25 @@ BUILTIN_CATALOG = StationCatalog((
         name="WWV", lat=40.6807, lon=-105.0407,
         frequencies_mhz=(2.5, 5.0, 10.0, 15.0, 20.0, 25.0),
         description="Fort Collins, CO, USA",
+        # NIST publishes 40 deg 40' 50.5" N, 105 deg 02' 26.6" W for the site.
+        # This entry sits 2 m from that figure.  NIST does not publish a
+        # per-frequency antenna table, so there is no `antennas` here.
+        source="NIST, Radio Station WWV (site coordinate)",
+        source_retrieved="2026-09-01",
     ),
     Station(
         name="WWVH", lat=21.9872, lon=-159.7636,
         frequencies_mhz=(2.5, 5.0, 10.0, 15.0),   # NOT 20/25 MHz
         description="Kekaha, Kauai, HI, USA",
+        source="NIST, WWVH Antenna Coordinates (tf.nist.gov/stations/wwvh.htm)",
+        source_retrieved="2026-09-01",
+        # Each frequency radiates from its own antenna at Kokole Point.
+        antennas={
+            2.5: (21.98913888888889, -159.76455555555555),
+            5.0: (21.986333333333334, -159.76244444444444),
+            10.0: (21.98838888888889, -159.76425),
+            15.0: (21.987583333333333, -159.76388888888889),
+        },
     ),
     Station(
         name="CHU", lat=45.2953, lon=-75.7544,
@@ -94,6 +140,10 @@ BUILTIN_CATALOG = StationCatalog((
         name="BPM", lat=34.9489, lon=109.5430,
         frequencies_mhz=(2.5, 5.0, 10.0, 15.0),
         description="Pucheng, Shaanxi, China",
+        # Published site coordinate 34 deg 56' 55.96" N, 109 deg 32' 34.93" E
+        # (NTSC, Chinese Academy of Sciences); this entry is within 15 m.
+        source="NTSC/CAS, BPM station (site coordinate)",
+        source_retrieved="2026-09-01",
     ),
     Station(
         name="WWVB", lat=40.6776, lon=-105.0470,

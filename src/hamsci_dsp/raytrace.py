@@ -195,15 +195,15 @@ def _raytrace_with_timeout(args, timeout_s=RAYTRACE_TIMEOUT_S):
 # ---------------------------------------------------------------------------
 # Station coordinates (transmitter sites)
 # ---------------------------------------------------------------------------
-try:
-    from hamsci_dsp.stations import BUILTIN_CATALOG
-    _STATION_LOCS = BUILTIN_CATALOG.locations()
-except Exception:
-    _STATION_LOCS = {
-        'WWV':   {'lat':  40.6773, 'lon': -105.0421},
-        'WWVH':  {'lat':  21.9875, 'lon': -159.7649},
-        'CHU':   {'lat':  45.2958, 'lon':  -75.7533},
-    }
+# One catalogue, no fallback.  This used to sit behind `except Exception`
+# with a hardcoded copy underneath — coordinates 0.3-0.5 km stale, and a
+# retired station among them.  An intra-package import does not realistically
+# fail, so the only thing that guard could ever do is hide a real problem
+# behind plausible-looking wrong numbers.  If the catalogue cannot be
+# imported, this module cannot do its job and should say so.
+from hamsci_dsp.stations import BUILTIN_CATALOG
+
+_STATION_LOCS = BUILTIN_CATALOG.locations()
 
 
 # ---------------------------------------------------------------------------

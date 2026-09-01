@@ -110,6 +110,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from hamsci_dsp.geometry import great_circle_km
+from hamsci_dsp.stations import BUILTIN_CATALOG as _CATALOG
 
 from hamsci_dsp.geometry import hop_geometry
 
@@ -130,12 +131,17 @@ DEFAULT_SAMPLE_RATE = 24000  # Hz
 # Samples per minute at default rate
 SAMPLES_PER_MINUTE = DEFAULT_SAMPLE_RATE * 60  # 1,440,000
 
-# Station locations (lat, lon in degrees)
-# These are FIXED - geography doesn't change
+# Station locations (lat, lon in degrees), derived from the ONE catalogue.
+#
+# These were hardcoded here and drifted.  WWV sat at (40.6781, -105.0469)
+# while the catalogue carried NIST's published figure — 0.49 km and 1.64 us
+# apart — with `mode_solver` reading the catalogue and this module reading
+# itself, so the two disagreed about the same path while both were live.
+# Commit 33e0925 had already CORRECTED the value; the correction reached one
+# copy.  Deriving retires the second truth instead of correcting it again.
 STATION_LOCATIONS = {
-    'WWV': (40.6781, -105.0469),   # Fort Collins, Colorado
-    'WWVH': (21.9886, -159.7642),  # Kekaha, Kauai, Hawaii
-    'BPM': (34.9500, 109.5500),    # Pucheng, China
+    s.name: s.coordinates for s in _CATALOG.active_stations()
+    if s.name in ('WWV', 'WWVH', 'BPM')
 }
 
 # Broadcast frequencies (MHz) per station.
@@ -154,9 +160,8 @@ STATION_LOCATIONS = {
 # .BroadcastKalmanFilter._get_broadcast_characteristics` for the
 # template).
 STATION_FREQUENCIES = {
-    'WWV': [2.5, 5.0, 10.0, 15.0, 20.0, 25.0],
-    'WWVH': [2.5, 5.0, 10.0, 15.0],
-    'BPM': [2.5, 5.0, 10.0, 15.0],
+    s.name: list(s.frequencies_mhz) for s in _CATALOG.active_stations()
+    if s.name in STATION_LOCATIONS
 }
 
 # Default ionospheric uncertainty (3-sigma) in milliseconds
@@ -503,12 +508,25 @@ class ArrivalPatternMatrix:
         # These track observed variance and allow windows to narrow
         self._broadcast_windows: Dict[Tuple[str, float], BroadcastWindowState] = {}
         
-        # Pre-compute great circle distances (these never change)
+        # Pre-compute great circle distances (these never change).
+        #
+        # Keyed by station for the site reference, and by (station, frequency)
+        # for the antenna that actually radiates that frequency.  NIST
+        # publishes WWVH's four antennas separately; they sit up to ~50 m
+        # apart along the path from Missouri, and every metrology channel is
+        # one frequency, so a channel can use the antenna it is listening to.
         self.great_circle_distances: Dict[str, float] = {}
+        self._antenna_distances: Dict[Tuple[str, float], float] = {}
         for station, (lat, lon) in STATION_LOCATIONS.items():
             self.great_circle_distances[station] = self._haversine_km(
                 self.receiver_lat, self.receiver_lon, lat, lon
             )
+            entry = _CATALOG.get(station)
+            for freq in entry.frequencies_mhz:
+                a_lat, a_lon = entry.antenna_for(freq)
+                self._antenna_distances[(station, float(freq))] = (
+                    self._haversine_km(
+                        self.receiver_lat, self.receiver_lon, a_lat, a_lon))
         
         # Try to import ionospheric model
         self._iono_model = None
@@ -543,6 +561,17 @@ class ArrivalPatternMatrix:
         for station, dist in self.great_circle_distances.items():
             logger.info(f"  {station}: {dist:.0f} km great circle")
     
+    def distance_km(self, station: str, frequency_mhz: float) -> float:
+        """Great-circle km to the antenna radiating this frequency.
+
+        Falls back to the station's site coordinate where the operator
+        publishes no per-frequency antenna position.
+        """
+        key = (station, float(frequency_mhz))
+        if key in self._antenna_distances:
+            return self._antenna_distances[key]
+        return self.great_circle_distances[station]
+
     @staticmethod
     def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         """Delegates to hamsci_dsp.geometry.great_circle_km (geodesic WGS-84)."""
@@ -1003,9 +1032,10 @@ class ArrivalPatternMatrix:
         model_tiers_used = set()
         
         for station, frequencies in STATION_FREQUENCIES.items():
-            distance_km = self.great_circle_distances[station]
-            
             for freq_mhz in frequencies:
+                # Per-frequency: the antenna radiating THIS frequency, which
+                # for WWVH is not the site point.
+                distance_km = self.distance_km(station, freq_mhz)
                 try:
                     prediction = self._prop_model.predict(
                         station=station,
@@ -1291,9 +1321,10 @@ class ArrivalPatternMatrix:
         model_tiers_used = set()
         
         for station, frequencies in STATION_FREQUENCIES.items():
-            distance_km = self.great_circle_distances[station]
-            
             for freq_mhz in frequencies:
+                # Per-frequency: the antenna radiating THIS frequency, which
+                # for WWVH is not the site point.
+                distance_km = self.distance_km(station, freq_mhz)
                 self._compute_single_legacy(matrix, station, freq_mhz, distance_km, utc_time)
                 
                 arrival = matrix.arrivals.get((station, freq_mhz))
