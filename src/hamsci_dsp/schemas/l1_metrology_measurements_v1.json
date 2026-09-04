@@ -130,6 +130,14 @@
             "type": "string",
             "required": true,
             "description": "Processing version"
+        },
+        {
+            "name": "leap_second_notice",
+            "type": "string",
+            "required": false,
+            "allow_empty": true,
+            "enum": ["none", "positive", "negative"],
+            "description": "Leap-second advance notice decoded from the broadcast's time code for the end of the current UTC month (WWVB dst_ls bits; WWV/WWVH BCD second 3 when wired). Fusion arms its leap-second Kalman hold from this. Absent when the source carries no time code."
         }
     ]
 }
