@@ -225,7 +225,7 @@ def test_standalone_block_shape_matches():
     live_keys = {
         "source", "schema", "a_level", "t_level_active", "t_level_witnesses",
         "rtp_to_utc_offset_ns", "sigma_ns", "disagreement_flags",
-        "governor_radiod", "client_radiod", "authority_utc_published",
+        "governor_radiod", "host_clock_verdict", "client_radiod", "authority_utc_published",
     }
     assert set(block) == live_keys
 
@@ -288,3 +288,38 @@ def test_sysclock_chronyc_failure_falls_back():
         raise OSError("chronyc missing")
     block = sysclock_timing_authority(run_chronyc=_boom)
     assert block["source"] == "sysclock-fallback"
+
+
+def test_host_clock_block_reads_through_and_names_its_verdict(tmp_path):
+    from hamsci_dsp.timing import AuthorityReader
+    p = tmp_path / "authority.json"
+    p.write_text(json.dumps({
+        "schema": "v1", "utc_published": "2026-09-04T15:06:50.012628Z",
+        "a_level": "A1", "t_level_active": "T6", "t_level_available": ["T6", "T3"],
+        "t_level_witnesses": ["T3", "T2"], "rtp_to_utc_offset_ns": -334104997,
+        "sigma_ns": 4205, "stations_contributing": [], "last_transition_utc": None,
+        "disagreement_flags": ["T6<->T2:11679.507ms>60.000ms:advisory"],
+        "host_clock": {"verdict": "fault", "reason": "T2 disagrees by 11679.5 ms (> 1000 ms)",
+                       "witnesses": {"T2": {"kind": "pair_ms", "value": 11679.507,
+                                            "bound": 60.0, "exceeded": True}},
+                       "since_utc": "2026-09-04T02:47:12.000000Z"},
+    }))
+    now = datetime(2026, 9, 4, 15, 6, 55, tzinfo=timezone.utc)
+    snap = AuthorityReader(path=p, now_fn=lambda: now).read()
+    assert snap.host_clock["verdict"] == "fault"
+    assert snap.to_timing_authority()["host_clock_verdict"] == "fault"
+
+
+def test_absent_host_clock_block_is_none_not_an_error(tmp_path):
+    from hamsci_dsp.timing import AuthorityReader
+    p = tmp_path / "authority.json"
+    p.write_text(json.dumps({
+        "schema": "v1", "utc_published": "2026-09-04T15:06:50.012628Z",
+        "a_level": "A1", "t_level_active": "T3", "t_level_available": ["T3"],
+        "t_level_witnesses": [], "rtp_to_utc_offset_ns": 0, "sigma_ns": 1000,
+        "stations_contributing": [], "last_transition_utc": None, "disagreement_flags": [],
+    }))
+    now = datetime(2026, 9, 4, 15, 6, 55, tzinfo=timezone.utc)
+    snap = AuthorityReader(path=p, now_fn=lambda: now).read()
+    assert snap.host_clock is None
+    assert snap.to_timing_authority()["host_clock_verdict"] is None

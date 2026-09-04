@@ -51,6 +51,11 @@ class AuthoritySnapshot:
     last_transition_utc: Optional[str]
     disagreement_flags: List[str]
     governor_radiod: Optional[str] = None
+    #: hf-timestd's host-clock verdict (additive v1 key, 2026-09-04):
+    #: {"verdict": ok|suspect|fault|unwitnessed, "reason", "witnesses", "since_utc"}.
+    #: None on producers older than that.  A sysclock-origin TimeMap bounds
+    #: its u_epoch_ns by it (hamsci_dsp.timing_map.sysclock_map).
+    host_clock: Optional[dict] = None
 
     @property
     def offset_usable(self) -> bool:
@@ -88,6 +93,9 @@ class AuthoritySnapshot:
             "sigma_ns": self.sigma_ns,
             "disagreement_flags": list(self.disagreement_flags),
             "governor_radiod": self.governor_radiod,
+            "host_clock_verdict": (
+                self.host_clock.get("verdict") if isinstance(self.host_clock, dict) else None
+            ),
             "client_radiod": client_radiod,
             "authority_utc_published": self.utc_published.isoformat(),
         }
@@ -158,6 +166,10 @@ class AuthorityReader:
                     if data.get("governor_radiod")
                     else None
                 ),
+                host_clock=(
+                    dict(data["host_clock"])
+                    if isinstance(data.get("host_clock"), dict) else None
+                ),
             )
         except (KeyError, TypeError, ValueError) as e:
             logger.debug("authority.json field error: %s", e)
@@ -181,6 +193,7 @@ def standalone_timing_authority(
         "sigma_ns": None,
         "disagreement_flags": [],
         "governor_radiod": None,
+        "host_clock_verdict": None,
         "client_radiod": client_radiod,
         "authority_utc_published": None,
     }
