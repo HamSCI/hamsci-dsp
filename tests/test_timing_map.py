@@ -264,3 +264,35 @@ def test_null_map_states_its_reason():
     rec = m.to_state_record(T0)
     assert rec["origin"] is None and rec["u_epoch_ns"] is None
     assert rec["reason"] == "no anchor, no usable pair"
+
+
+import json  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+GOLDEN = Path(__file__).parent / "golden"
+
+
+def _parse_t(s):
+    from hamsci_dsp.timing_map import _parse_iso_z_ns
+    return _parse_iso_z_ns(s)
+
+
+def test_golden_state_record_round_trips_byte_for_byte():
+    rec = json.loads((GOLDEN / "timing_state_b4_20260904T1600Z.json").read_text())
+    m = TimeMap.from_state_record(rec)
+    again = m.to_state_record(_parse_t(rec["t"]))
+    assert again == rec
+
+
+def test_golden_chain_record_round_trips_byte_for_byte():
+    rec = json.loads((GOLDEN / "timing_chain_payload_anchored_v1.json").read_text())
+    assert Chain.from_record(rec).to_record() == rec
+
+
+def test_parse_iso_reads_the_shorter_forms_other_writers_use():
+    from hamsci_dsp.timing_map import _parse_iso_z_ns
+    base = 1_788_537_600 * _BILLION
+    assert _parse_iso_z_ns("2026-09-04T16:00:00Z") == base
+    assert _parse_iso_z_ns("2026-09-04T16:00:00.5Z") == base + 500_000_000
+    assert _parse_iso_z_ns("2026-09-04T16:00:00.000001+00:00") == base + 1_000
+    assert _parse_iso_z_ns("2026-09-04T16:00:00.000000001Z") == base + 1
