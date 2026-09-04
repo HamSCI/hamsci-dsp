@@ -619,3 +619,98 @@ def test_a_real_sqlite_path_is_still_honoured(tmp_path, monkeypatch):
         storage_config={"sqlite_path": str(tmp_path / "x.db")},
     )
     assert captured["db_path"] == tmp_path / "x.db"
+
+
+class TestRetiredRequiredColumns:
+    """CHU retirement (2026-09-04) removed ``chu_count`` and
+    ``reference_station`` from ``l3_fusion_timing``.  Live station DBs
+    were created with those columns NOT NULL; a writer that no longer
+    supplies them must still be able to insert, and the archived CHU
+    values must survive the migration."""
+
+    def _old_l3_table(self, temp_db):
+        table = "L3_fusion_timing"
+        conn = sqlite3.connect(str(temp_db))
+        conn.execute(
+            f"CREATE TABLE {table} ("
+            "channel TEXT NOT NULL, "
+            "timestamp_utc TEXT NOT NULL, "
+            "wwv_count INTEGER NOT NULL, "
+            "chu_count INTEGER NOT NULL, "
+            "reference_station TEXT NOT NULL"
+            ")"
+        )
+        conn.execute(
+            f"INSERT INTO {table} VALUES (?, ?, ?, ?, ?)",
+            ("FUSION", "2026-06-01T00:00:00Z", 2, 3, "CHU"),
+        )
+        conn.commit()
+        conn.close()
+        return table
+
+    def test_retired_not_null_columns_are_relaxed(self, temp_dir, temp_db):
+        table = self._old_l3_table(temp_db)
+        writer = _make_writer(temp_dir, temp_db, product="fusion_timing", level="L3", channel="FUSION")
+        try:
+            conn = sqlite3.connect(str(temp_db))
+            info = {row[1]: row for row in conn.execute(f"PRAGMA table_info({table})")}
+            conn.close()
+            assert info["chu_count"][3] == 0, "chu_count must be nullable after migration"
+            assert info["reference_station"][3] == 0
+            # Columns still in the schema keep their constraint.
+            assert info["wwv_count"][3] == 1
+            assert info["channel"][3] == 1
+        finally:
+            writer.close()
+
+    def test_archived_rows_survive(self, temp_dir, temp_db):
+        table = self._old_l3_table(temp_db)
+        writer = _make_writer(temp_dir, temp_db, product="fusion_timing", level="L3", channel="FUSION")
+        try:
+            conn = sqlite3.connect(str(temp_db))
+            rows = conn.execute(
+                f"SELECT channel, chu_count, reference_station FROM {table}"
+            ).fetchall()
+            conn.close()
+            assert rows == [("FUSION", 3, "CHU")]
+        finally:
+            writer.close()
+
+    def test_new_row_without_retired_fields_inserts(self, temp_dir, temp_db):
+        table = self._old_l3_table(temp_db)
+        writer = _make_writer(temp_dir, temp_db, product="fusion_timing", level="L3", channel="FUSION")
+        try:
+            row = {f["name"]: None for f in writer.schema["fields"] if f["name"] != "channel"}
+            row.update({
+                "timestamp_utc": "2026-09-04T20:00:00Z", "minute_boundary": 1788552000,
+                "d_clock_fused_ms": 0.1, "d_clock_raw_ms": 0.1, "uncertainty_ms": 0.5,
+                "statistical_uncertainty_ms": 0.3, "systematic_uncertainty_ms": 0.3,
+                "propagation_uncertainty_ms": 0.2, "n_broadcasts": 4, "n_stations": 2,
+                "stations_used": "WWV,WWVH", "wwv_count": 2, "wwvh_count": 2, "bpm_count": 0,
+                "consistency_flag": "OK", "global_solve_verified": False, "global_solve_n_obs": 0,
+                "calibration_applied": True, "outliers_rejected": 0, "quality_grade": "A",
+                "kalman_state": "LOCKED", "quality_flag": "GOOD", "processing_version": "test",
+                "single_station_mode": False,
+            })
+            # Only pass fields the schema still requires or we set explicitly.
+            row = {k: v for k, v in row.items() if v is not None}
+            writer.write_measurement(row)
+            conn = sqlite3.connect(str(temp_db))
+            n, chu = conn.execute(
+                f"SELECT COUNT(*), SUM(chu_count IS NULL) FROM {table}"
+            ).fetchone()
+            conn.close()
+            assert n == 2 and chu == 1
+        finally:
+            writer.close()
+
+    def test_migration_is_idempotent(self, temp_dir, temp_db):
+        self._old_l3_table(temp_db)
+        for _ in range(2):
+            w = _make_writer(temp_dir, temp_db, product="fusion_timing", level="L3", channel="FUSION")
+            w.close()
+        conn = sqlite3.connect(str(temp_db))
+        n = conn.execute("SELECT COUNT(*) FROM L3_fusion_timing").fetchone()[0]
+        tmp = conn.execute("SELECT name FROM sqlite_master WHERE name LIKE '%__relax_tmp'").fetchall()
+        conn.close()
+        assert n == 1 and tmp == []

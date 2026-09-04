@@ -74,3 +74,16 @@ def test_no_distance_is_computed_to_a_retired_station():
     leaked = _inactive_names() & set(apm.great_circle_distances)
     assert not leaked, (
         f"great_circle_distances still carries {sorted(leaked)}")
+
+
+def test_chu_fsk_product_is_gone():
+    """The CHU FSK decoder retired with CHU (hf-timestd 8b33ed5); the
+    registry no longer advertises a product nothing can produce, and the
+    L3 fusion record no longer carries per-CHU statistics or the vestigial
+    reference_station label."""
+    from hamsci_dsp.data_product_registry import DataProductRegistry
+    from hamsci_dsp.schemas import get_registry, get_schema
+    assert ("L2", "chu_fsk") not in DataProductRegistry.PRODUCT_SCHEMAS
+    assert "L2_chu_fsk" not in get_registry()["data_products"]
+    names = {f["name"] for f in get_schema("L3", "fusion_timing")["fields"]}
+    assert not {"chu_mean_ms", "chu_count", "chu_intra_std_ms", "reference_station"} & names

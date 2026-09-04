@@ -81,12 +81,6 @@
             "description": "Per-second tick timing measurements (55+ estimates/minute)",
             "replaces": []
         },
-        "L2_chu_fsk": {
-            "current_version": "v1",
-            "schema_file": "l2_chu_fsk_v1.json",
-            "description": "CHU FSK time code decode with precise 500ms timing",
-            "replaces": []
-        },
         "L3A_dtec_timeseries": {
             "current_version": "v1",
             "schema_file": "l3_dtec_timeseries_v1.json",

@@ -89,7 +89,7 @@
             "type": "string",
             "required": true,
             "description": "Comma-separated list of stations contributing to fusion",
-            "example": "WWV,WWVH,CHU"
+            "example": "WWV,WWVH"
         },
         {
             "name": "wwv_mean_ms",
@@ -105,14 +105,6 @@
             "required": false,
             "allow_empty": true,
             "description": "Mean D_clock from WWVH broadcasts",
-            "units": "milliseconds"
-        },
-        {
-            "name": "chu_mean_ms",
-            "type": "float",
-            "required": false,
-            "allow_empty": true,
-            "description": "Mean D_clock from CHU broadcasts",
             "units": "milliseconds"
         },
         {
@@ -136,12 +128,6 @@
             "description": "Number of WWVH broadcasts in fusion"
         },
         {
-            "name": "chu_count",
-            "type": "integer",
-            "required": true,
-            "description": "Number of CHU broadcasts in fusion"
-        },
-        {
             "name": "bpm_count",
             "type": "integer",
             "required": true,
@@ -161,14 +147,6 @@
             "required": false,
             "allow_empty": true,
             "description": "Intra-station standard deviation for WWVH broadcasts",
-            "units": "milliseconds"
-        },
-        {
-            "name": "chu_intra_std_ms",
-            "type": "float",
-            "required": false,
-            "allow_empty": true,
-            "description": "Intra-station standard deviation for CHU broadcasts",
             "units": "milliseconds"
         },
         {
@@ -224,18 +202,6 @@
             "type": "boolean",
             "required": true,
             "description": "Whether per-broadcast calibration was applied"
-        },
-        {
-            "name": "reference_station",
-            "type": "string",
-            "required": true,
-            "enum": [
-                "WWV",
-                "WWVH",
-                "CHU",
-                "BPM"
-            ],
-            "description": "Reference station for calibration"
         },
         {
             "name": "outliers_rejected",

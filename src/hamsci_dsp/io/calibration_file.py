@@ -261,8 +261,6 @@ def _stations_list(result) -> list:
         stations.append("WWV")
     if getattr(result, 'wwvh_count', 0) > 0:
         stations.append("WWVH")
-    if getattr(result, 'chu_count', 0) > 0:
-        stations.append("CHU")
     if getattr(result, 'bpm_count', 0) > 0:
         stations.append("BPM")
     return stations
@@ -274,7 +272,6 @@ def _station_detail(result) -> dict:
     for name, mean_attr, count_attr, std_attr in [
         ("WWV", "wwv_mean_ms", "wwv_count", "wwv_intra_std_ms"),
         ("WWVH", "wwvh_mean_ms", "wwvh_count", "wwvh_intra_std_ms"),
-        ("CHU", "chu_mean_ms", "chu_count", "chu_intra_std_ms"),
         ("BPM", "bpm_mean_ms", "bpm_count", "bpm_intra_std_ms"),
     ]:
         count = getattr(result, count_attr, 0)

@@ -306,7 +306,8 @@ class HFPropagationModel:
         self._cache: Dict[Tuple[str, float, int], PropagationPrediction] = {}
         self._cache_ttl_s = 60  # Cache predictions for 1 minute
         
-        # DUT1 (UT1-UTC) correction from CHU FSK Frame B decode.
+        # DUT1 (UT1-UTC) correction, supplied by set_dut1() (no live source
+        # since the CHU FSK Frame B decode retired 2026-09-04; stays 0.0).
         # Used to compute UT1 for correct solar zenith angle in the parametric
         # ionospheric fallback model. UT1 = UTC + DUT1 gives the correct Earth
         # rotation angle. Typical magnitude: ±0.9s, updated via set_dut1().
@@ -553,12 +554,15 @@ class HFPropagationModel:
         return self._parametric_iono(lat, lon, utc_time)
     
     def set_dut1(self, dut1_seconds: float) -> None:
-        """Set DUT1 (UT1-UTC) from CHU FSK Frame B decode.
+        """Set DUT1 (UT1-UTC) from an external source.
+
+        The CHU FSK Frame B decode used to supply this; it retired with CHU
+        on 2026-09-04.  Nothing calls this today; a future DUT1 witness may.
         
         DUT1 corrects UTC to UT1 (Earth rotation angle) for accurate solar
         zenith computation in the parametric ionospheric model. The effect is
         small (±0.9s → ±0.004° solar angle) but represents a real correction
-        from a national time lab broadcast.
+        when a national time lab broadcast supplies it.
         
         Args:
             dut1_seconds: DUT1 in seconds (typically -0.9 to +0.9)

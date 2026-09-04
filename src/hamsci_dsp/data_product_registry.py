@@ -15,12 +15,12 @@ The system uses a broadcast-centric storage model where each of the 17 broadcast
     │   ├── WWV_10000/                # One directory per broadcast
     │   │   ├── L1_measurements_YYYYMMDD.h5
     │   │   └── L2_timing_YYYYMMDD.h5
-    │   ├── CHU_7850/
+    │   ├── WWV_20000/
     │   └── ...
     │
     ├── channels/                      # Channel-centric (receiver data)
     │   ├── SHARED_10000/             # Raw IQ, carrier power
-    │   └── CHU_7850/
+    │   └── WWV_20000/
     │
     └── fusion/                        # L3 cross-broadcast products
         ├── d_clock_YYYYMMDD.h5
@@ -51,14 +51,14 @@ class DataProductRegistry:
     
     Example:
         >>> from pathlib import Path
-        >>> channel_dir = Path('/var/lib/timestd/phase2/CHU_14670')
+        >>> channel_dir = Path('/var/lib/timestd/phase2/WWV_20000')
         >>> 
         >>> # Get location for L2 timing measurements
         >>> data_dir = DataProductRegistry.get_data_dir(
         ...     channel_dir, 'L2', 'timing_measurements'
         ... )
         >>> print(data_dir)
-        /var/lib/timestd/phase2/CHU_14670/clock_offset
+        /var/lib/timestd/phase2/WWV_20000/clock_offset
     """
     
     # Map: (product_level, product_name) -> schema filename
@@ -76,7 +76,6 @@ class DataProductRegistry:
         # L2
         ('L2', 'broadcast_timing'):          'l2_timing_measurements_v1.json',
         ('L2', 'broadcast_physics'):         'l2_physics_v1.json',
-        ('L2', 'chu_fsk'):                   'l2_chu_fsk_v1.json',
         ('L2', 'wwv_test_signal'):           'l2_test_signal_v1.json',
         ('L2', 'tick_timing'):               'l2_tick_timing_v1.json',
         ('L2', 'detection_attempts'):        'l2_detection_attempts_v1.json',
@@ -123,7 +122,6 @@ class DataProductRegistry:
         ('L2', 'broadcast_physics'): 'broadcast:physics',
         
         # Station-specific L2 products
-        ('L2', 'chu_fsk'): 'broadcast:fsk',           # CHU only
         ('L2', 'wwv_bcd'): 'broadcast:bcd',           # WWV/WWVH only
         ('L2', 'wwv_test_signal'): 'broadcast:test',  # WWV/WWVH only
         ('L2', 'tick_timing'): 'tick_timing',         # Per-second tick timing (55+ estimates/min)
@@ -179,7 +177,7 @@ class DataProductRegistry:
         Get the correct data directory for a product.
         
         Args:
-            channel_dir: Base channel directory (e.g., /var/lib/timestd/phase2/CHU_14670)
+            channel_dir: Base channel directory (e.g., /var/lib/timestd/phase2/WWV_20000)
             product_level: L1, L2, L3, L3B, L3C
             product_name: Product name (e.g., 'timing_measurements')
             create: If True, create the directory if it doesn't exist
@@ -191,12 +189,12 @@ class DataProductRegistry:
             ValueError: If product type is not registered
             
         Example:
-            >>> channel_dir = Path('/var/lib/timestd/phase2/CHU_14670')
+            >>> channel_dir = Path('/var/lib/timestd/phase2/WWV_20000')
             >>> path = DataProductRegistry.get_data_dir(
             ...     channel_dir, 'L2', 'timing_measurements'
             ... )
             >>> print(path)
-            /var/lib/timestd/phase2/CHU_14670/clock_offset
+            /var/lib/timestd/phase2/WWV_20000/clock_offset
         """
         key = (product_level, product_name)
         subdirectory = cls.PRODUCT_LOCATIONS.get(key)
@@ -313,7 +311,7 @@ class DataProductRegistry:
         
         Args:
             base_dir: Base phase2 directory (e.g., /var/lib/timestd/phase2)
-            broadcast_id: Broadcast ID (e.g., 'WWV_10000', 'CHU_7850')
+            broadcast_id: Broadcast ID (e.g., 'WWV_10000', 'WWV_20000')
             product_level: L1, L2
             product_name: Product name (e.g., 'broadcast_measurements')
             create: If True, create directory if it doesn't exist
@@ -324,10 +322,10 @@ class DataProductRegistry:
         Example:
             >>> base_dir = Path('/var/lib/timestd/phase2')
             >>> path = DataProductRegistry.get_broadcast_data_dir(
-            ...     base_dir, 'CHU_7850', 'L1', 'broadcast_measurements'
+            ...     base_dir, 'WWV_20000', 'L1', 'broadcast_measurements'
             ... )
             >>> print(path)
-            /var/lib/timestd/phase2/broadcasts/CHU_7850
+            /var/lib/timestd/phase2/broadcasts/WWV_20000
         """
         key = (product_level, product_name)
         location = cls.PRODUCT_LOCATIONS.get(key)
@@ -370,7 +368,7 @@ class DataProductRegistry:
         
         Args:
             base_dir: Base phase2 directory (e.g., /var/lib/timestd/phase2)
-            channel_name: Channel name (e.g., 'SHARED_10000', 'CHU_7850')
+            channel_name: Channel name (e.g., 'SHARED_10000', 'WWV_20000')
             product_level: L1
             product_name: Product name (e.g., 'channel_observables')
             create: If True, create directory if it doesn't exist

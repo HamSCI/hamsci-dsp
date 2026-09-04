@@ -215,6 +215,7 @@ class SqliteDataProductWriter:
         ddl = f"CREATE TABLE IF NOT EXISTS {self.table} (\n    " + ",\n    ".join(cols) + "\n)"
         self._conn.execute(ddl)
         self._migrate_missing_columns()
+        self._relax_retired_not_null_columns()
 
         # Non-unique index for time-range queries. Pick the best
         # ordering column the schema offers.
@@ -275,6 +276,66 @@ class SqliteDataProductWriter:
                 "SqliteDataProductWriter: added missing column %s.%s %s",
                 self.table, name, sql_type,
             )
+
+    def _relax_retired_not_null_columns(self) -> None:
+        """Forward migration for fields REMOVED from the JSON schema after
+        the live DB was created.
+
+        ``_ensure_table`` gives every ``required`` field a NOT NULL
+        constraint at creation.  When a field later leaves the schema
+        (CHU retirement, 2026-09-04: ``chu_count`` and
+        ``reference_station`` left ``l3_fusion_timing``), the writer no
+        longer supplies it, and every INSERT on an old table fails that
+        constraint.  SQLite cannot drop a constraint with ALTER TABLE,
+        so the table is rebuilt once via the documented copy-and-rename
+        recipe: same columns, same order, NOT NULL removed from the
+        retired ones.  Every existing row survives — the archived
+        values stay readable, which is the forward-only policy of
+        ``_migrate_missing_columns`` carried to its conclusion.
+
+        Idempotent: a table whose retired columns are already nullable
+        (or has none) is untouched.  Indexes are recreated by the
+        caller after this runs.
+        """
+        cur = self._conn.execute(f"PRAGMA table_info({self.table})")
+        info = cur.fetchall()  # (cid, name, type, notnull, dflt_value, pk)
+        schema_names = {f["name"] for f in self.schema["fields"]} | {"channel"}
+        retired = [row[1] for row in info if row[3] and row[1] not in schema_names]
+        if not retired:
+            return
+
+        col_defs: List[str] = []
+        for _cid, name, ctype, notnull, dflt, pk in info:
+            parts = [name, ctype or ""]
+            if notnull and name not in retired:
+                parts.append("NOT NULL")
+            if dflt is not None:
+                parts.append(f"DEFAULT {dflt}")
+            if pk:
+                parts.append("PRIMARY KEY")
+            col_defs.append(" ".join(part for part in parts if part))
+        names = ", ".join(row[1] for row in info)
+        tmp = f"{self.table}__relax_tmp"
+
+        # isolation_level=None → explicit transaction so a failure mid-way
+        # leaves the original table in place.
+        self._conn.execute("BEGIN")
+        try:
+            self._conn.execute(f"DROP TABLE IF EXISTS {tmp}")
+            self._conn.execute(
+                f"CREATE TABLE {tmp} (\n    " + ",\n    ".join(col_defs) + "\n)"
+            )
+            self._conn.execute(f"INSERT INTO {tmp} ({names}) SELECT {names} FROM {self.table}")
+            self._conn.execute(f"DROP TABLE {self.table}")
+            self._conn.execute(f"ALTER TABLE {tmp} RENAME TO {self.table}")
+            self._conn.execute("COMMIT")
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
+        logger.info(
+            "SqliteDataProductWriter: relaxed NOT NULL on retired column(s) %s in %s",
+            ", ".join(retired), self.table,
+        )
 
     # ------------------------------------------------------------------
     # Validation (identical to DataProductWriter)
