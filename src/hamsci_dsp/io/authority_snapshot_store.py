@@ -153,6 +153,14 @@ COLUMNS = (
     # like a night held with one.  NULL on producers older than this.
     "t6_fine_search_mode",
     "t6_fine_coarse_unverified",
+    # The host-clock verdict (hf-timestd host_clock_integrity, 2026-09-04):
+    # the verdict, when the episode began, and the two epoch witnesses.
+    # NULL on producers older than that.  On 2026-09-04 AC0G-B4 ran 11.6 s
+    # slow for thirteen hours with nothing in this table saying so.
+    "host_clock_verdict",
+    "host_clock_since_utc",
+    "host_clock_t2_ms",
+    "host_clock_lb1421_s",
 )
 
 
@@ -186,6 +194,8 @@ _INT_COLUMNS = frozenset({
     "t6_fine_coarse_unverified",
 })
 _REAL_COLUMNS = frozenset({
+    "host_clock_t2_ms",
+    "host_clock_lb1421_s",
     "t6_offset_ms",
     "t6_sigma_ms",
     "t6_breach_duration_sec",
@@ -250,8 +260,12 @@ class AuthoritySnapshotStore:
         )
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
-        self._conn.executescript(_CREATE_TABLE + ";\n" + _CREATE_INDEX_T_LEVEL + ";")
+        # Create, migrate, THEN index: the index names t_level_active, and a
+        # table older than that column must gain it before the index can
+        # be built (2026-09-04).
+        self._conn.executescript(_CREATE_TABLE + ";")
         self._migrate_missing_columns()
+        self._conn.executescript(_CREATE_INDEX_T_LEVEL + ";")
         self._conn.commit()
         logger.info(
             "AuthoritySnapshotStore initialised at %s", self.db_path,

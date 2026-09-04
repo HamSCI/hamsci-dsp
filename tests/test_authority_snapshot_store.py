@@ -495,3 +495,32 @@ class TestFineAcquisitionTelemetry(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_host_clock_columns_round_trip(tmp_path):
+    from hamsci_dsp.io.authority_snapshot_store import AuthoritySnapshotStore, COLUMNS
+    for c in ("host_clock_verdict", "host_clock_since_utc", "host_clock_t2_ms", "host_clock_lb1421_s"):
+        assert c in COLUMNS, c
+    db = tmp_path / "authority_history.db"
+    with AuthoritySnapshotStore(db) as store:
+        store.insert({"utc_published": "2026-09-04T15:06:50.012628Z", "schema_version": "v1",
+                      "host_clock_verdict": "fault", "host_clock_since_utc": "2026-09-04T02:47:12Z",
+                      "host_clock_t2_ms": 11679.507, "host_clock_lb1421_s": -12.1})
+    row = sqlite3.connect(db).execute(
+        "SELECT host_clock_verdict, host_clock_since_utc, host_clock_t2_ms, host_clock_lb1421_s "
+        "FROM authority_snapshot").fetchone()
+    assert row == ("fault", "2026-09-04T02:47:12Z", 11679.507, -12.1)
+
+
+def test_existing_db_gains_the_host_clock_columns_on_reopen(tmp_path):
+    """A station's history DB predates the column; reopening migrates it."""
+    from hamsci_dsp.io.authority_snapshot_store import AuthoritySnapshotStore
+    db = tmp_path / "authority_history.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE authority_snapshot (utc_published TEXT NOT NULL PRIMARY KEY, schema_version INTEGER)")
+    conn.commit(); conn.close()
+    with AuthoritySnapshotStore(db) as store:
+        store.insert({"utc_published": "2026-09-04T17:45:57Z", "host_clock_verdict": "suspect"})
+    row = sqlite3.connect(db).execute(
+        "SELECT host_clock_verdict FROM authority_snapshot").fetchone()
+    assert row == ("suspect",)
