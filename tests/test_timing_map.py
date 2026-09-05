@@ -212,6 +212,11 @@ def test_sysclock_map_wears_the_pairs_measured_uncertainty_when_the_clock_is_ok(
     assert (m.k, m.p) == (1, 0.99)
     assert "pair_non_atomicity" in m.reason
     assert m.engineering["host_clock"]["verdict"] == "ok"
+    # The builder records the pair it used in UTC under its own name; the
+    # producer's legacy key radiod_gps_time_ns (raw GPS-epoch ns) is not
+    # overwritten (AC0G-B4 2026-09-05: the two collided).
+    assert m.engineering["radiod_gps_time_utc_ns"] == 1_788_537_000_000_000_000
+    assert "radiod_gps_time_ns" not in m.engineering
 
 
 def test_sysclock_map_on_b4_at_1500z_says_eleven_seconds():

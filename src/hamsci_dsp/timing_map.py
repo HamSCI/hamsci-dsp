@@ -354,7 +354,10 @@ def sysclock_map(
     non-atomicity and the host-clock verdict's largest disagreement, and
     the reason names which governed."""
     eng = dict(engineering or {})
-    eng["radiod_gps_time_ns"] = int(gps_time_ns)
+    # The pair as the map used it, in UTC ns.  Not ``radiod_gps_time_ns``:
+    # hf-timestd's legacy sidecar key of that name carries radiod's RAW
+    # GPS_TIME (GPS epoch, no leap seconds) and must keep meaning that.
+    eng["radiod_gps_time_utc_ns"] = int(gps_time_ns)
     eng["radiod_rtp_timesnap"] = int(rtp_timesnap)
     if host_clock is not None:
         eng["host_clock"] = dict(host_clock)
