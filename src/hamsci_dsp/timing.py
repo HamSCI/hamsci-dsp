@@ -26,7 +26,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import Callable, Iterable, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -313,6 +313,49 @@ class AnchorUTC:
         """The anchor as a tz-aware UTC datetime (codar/hf-tec/wspr want this)."""
         return datetime.fromtimestamp(self.utc, tz=timezone.utc)
 
+    def timing_authority_applied(
+        self,
+        client_radiod: Optional[str] = None,
+        now_fn: Optional[Callable[[], float]] = None,
+    ) -> Optional[dict]:
+        """The CLIENT-CONTRACT §3 ``timing_authority_applied`` block for a
+        recorder whose labels ride THIS anchor — or None when they carry no
+        authority correction (§18.5 amendment 2026-09-04: reading a snapshot
+        is not applying it; only a corrected label reports populated).
+
+        Built from the snapshot that actually corrected the label, never
+        from a fresh read of authority.json — the two can differ, and the
+        report describes the labels.  The five contract keys come first;
+        the rest is additive provenance so a later reader can put this
+        client's labels on the same timeline as its peers'.
+        """
+        if self.offset_ns is None or self.snapshot is None:
+            return None
+        snap = self.snapshot
+        governor = getattr(snap, "governor_radiod", None)
+        published = getattr(snap, "utc_published", None)
+        age = None
+        if isinstance(published, datetime):
+            now = (now_fn or time.time)()
+            age = now - published.timestamp()
+        host_clock = getattr(snap, "host_clock", None)
+        return {
+            "source": f"hf-timestd@{governor}" if governor else "hf-timestd",
+            "tier": getattr(snap, "t_level_active", None),
+            "sigma_ns": getattr(snap, "sigma_ns", None),
+            "snapshot_age_s": age,
+            "radiod_id": client_radiod,
+            "rtp_to_utc_offset_ns": self.offset_ns,
+            "anchor_source": self.source,
+            "anchor_utc": self.datetime.isoformat(),
+            "host_clock_verdict": (
+                host_clock.get("verdict") if isinstance(host_clock, dict) else None
+            ),
+            "authority_utc_published": (
+                published.isoformat() if isinstance(published, datetime) else None
+            ),
+        }
+
 
 def acquire_anchor_utc(
     first_rtp: Optional[int],
@@ -324,6 +367,7 @@ def acquire_anchor_utc(
     samples_behind: int = 0,
     sample_rate: int = 12000,
     now_fn: Optional[Callable[[], float]] = None,
+    anchor_hint_utc: Optional[float] = None,
 ) -> AnchorUTC:
     """Pin one RTP timestamp to UTC — the canonical anchor every sigmond
     slot/frame recorder establishes once at stream start.
@@ -353,6 +397,16 @@ def acquire_anchor_utc(
 
     ``source`` ∈ {``"rtp_to_utc+authority"``, ``"rtp_to_utc"``,
     ``"authority_on_wallclock"``, ``"wallclock_fallback"``}.
+
+    ``anchor_hint_utc`` — the approximate UTC of ``first_rtp`` when the caller
+    already knows it.  REQUIRED when re-mapping a FIXED anchor RTP taken long
+    ago (the slide-follow re-pin every recorder does each tick): the wrap
+    hint must lie within ±P/2 of the anchor's TRUE instant, P/2 = 49.7 h at
+    12 kHz, and "now" leaves that window after two days of uptime.  AC0G-B4
+    2026-09-08: the hint aliased, k flipped, the anchor's UTC jumped +99.42 h
+    and 136 FT8 spots left the station labelled four days ahead.  Pass the
+    UTC the anchor was first given.  Default: ``now_fn() + offset`` — correct
+    only for an RTP that IS recent, i.e. the first anchor.
     """
     # Resolve at call time (not as a default arg) so ``time.time`` stays
     # patchable and an explicit now_fn still wins.
@@ -365,15 +419,21 @@ def acquire_anchor_utc(
             logger.warning("authority read failed at anchor: %s", exc)
             snapshot = None
     usable = snapshot is not None and snapshot.offset_usable
-    offset_sec = snapshot.offset_seconds if usable else 0.0
-    offset_ns = snapshot.rtp_to_utc_offset_ns if usable else None
+    # The schema publishes the integer; seconds derive from it here so any
+    # snapshot carrying the published field will do.
+    offset_ns = int(snapshot.rtp_to_utc_offset_ns) if usable else None
+    offset_sec = offset_ns / 1_000_000_000.0 if usable else 0.0
 
     if first_rtp is not None and channel_info is not None:
         try:
+            hint = (
+                anchor_hint_utc if anchor_hint_utc is not None
+                else now_fn() + offset_sec
+            )
             utc_sec = rtp_to_utc(
                 int(first_rtp) & 0xFFFFFFFF,
                 channel_info,
-                wallclock_hint_sec=now_fn() + offset_sec,
+                wallclock_hint_sec=hint,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("rtp_to_utc raised at anchor: %s", exc)
@@ -398,6 +458,95 @@ def acquire_anchor_utc(
         snapshot=snapshot,
         rtp_referenced=False,
     )
+
+
+def applied_state_for_anchors(
+    anchors: Iterable[Optional[AnchorUTC]],
+    client_radiod: Optional[str],
+    now_fn: Optional[Callable[[], float]] = None,
+) -> Optional[dict]:
+    """One instance's §3 ``timing_authority_applied`` block from the anchors
+    of all its channels (psk/meteor: one per ChannelSink; wspr: one per
+    BandRecorder), or None.
+
+    Populated iff at least one channel is anchored and every anchored
+    channel's anchor carries the authority offset — CLIENT-CONTRACT §18.7:
+    a mixed state stays legal but must be VISIBLE, so it reports null here,
+    never an average.  Channels not yet anchored have no label to report
+    and do not veto.  The block is the newest applied anchor's own report
+    plus ``channels: {total, anchored, applied}`` so the reader can see how
+    many labels it stands for.
+    """
+    anchors = list(anchors)
+    anchored = [a for a in anchors if a is not None]
+    applied = [a for a in anchored if a.offset_ns is not None]
+    counts = {"total": len(anchors), "anchored": len(anchored), "applied": len(applied)}
+    if not anchored or len(applied) != len(anchored):
+        return None
+    newest = max(applied, key=lambda a: a.utc)
+    block = newest.timing_authority_applied(client_radiod=client_radiod, now_fn=now_fn)
+    if block is None:
+        return None
+    block["channels"] = counts
+    return block
+
+
+APPLIED_STATE_SCHEMA = "applied-state/v1"
+#: A recorder writes its applied block once a minute; an inventory read
+#: older than this treats the instance as not applying anything (stopped).
+DEFAULT_APPLIED_STATE_MAX_AGE_S = 300.0
+
+
+def write_applied_state(
+    path: Path,
+    block: Optional[dict],
+    now_fn: Optional[Callable[[], float]] = None,
+) -> None:
+    """Leave the ``timing_authority_applied`` block a running recorder is
+    applying where its own ``inventory --json`` (a separate process) can
+    find it.  ``None`` is written explicitly: present-and-fresh-and-null
+    means "running in §18 default mode", absent means "not running".
+    Atomic (tmp + rename); never raises into the audio path.
+    """
+    now = (now_fn or time.time)()
+    payload = {
+        "schema": APPLIED_STATE_SCHEMA,
+        "written_epoch": now,
+        "written_utc": datetime.fromtimestamp(now, tz=timezone.utc).isoformat(),
+        "timing_authority_applied": block,
+    }
+    path = Path(path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps(payload, indent=1), encoding="utf-8")
+        tmp.replace(path)
+    except OSError as exc:
+        logger.warning("applied-state write failed at %s: %s", path, exc)
+
+
+def read_applied_state(
+    path: Path,
+    max_age_s: float = DEFAULT_APPLIED_STATE_MAX_AGE_S,
+    now_fn: Optional[Callable[[], float]] = None,
+) -> Optional[dict]:
+    """The block :func:`write_applied_state` left, or None when the file is
+    missing, unreadable, of another schema, older than ``max_age_s`` (the
+    recorder stopped writing, so nothing is being applied), or null."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or data.get("schema") != APPLIED_STATE_SCHEMA:
+        return None
+    try:
+        written = float(data["written_epoch"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if (now_fn or time.time)() - written > max_age_s:
+        return None
+    block = data.get("timing_authority_applied")
+    return dict(block) if isinstance(block, dict) else None
 
 
 def _parse_iso_z(s: str) -> datetime:

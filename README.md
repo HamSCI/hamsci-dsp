@@ -18,7 +18,7 @@ hamsci-dsp = { path = "../hamsci-dsp", editable = true }
 
 | Module | What it provides | Deps |
 |--------|------------------|------|
-| `hamsci_dsp.timing` | `AuthorityReader` / `AuthoritySnapshot` — RTP↔UTC offset + tier from hf-timestd's `authority.json`. | stdlib |
+| `hamsci_dsp.timing` | `AuthorityReader` / `AuthoritySnapshot` read hf-timestd's `authority.json`. `acquire_anchor_utc` pins the one RTP→UTC anchor every recorder shares (pass `anchor_hint_utc` when re-mapping a fixed anchor). `AnchorUTC.timing_authority_applied` and `applied_state_for_anchors` build the contract §3 report; `write_applied_state` / `read_applied_state` carry it from the daemon to `inventory --json`. | stdlib |
 | `hamsci_dsp.constants` | `C_M_S`, `K_TEC=40.3`, `R_EARTH_KM`, `TECU`. | stdlib |
 | `hamsci_dsp.geometry` | great-circle distance / bearing / midpoint / destination (geographiclib), reflection geometry (elevation, hop path), Maidenhead grid ↔ lat/lon. | numpy, geographiclib |
 | `hamsci_dsp.dsp` | canonical peak SNR (Rayleigh/​signed), robust noise floor, `CoherentStack` (slow-time range-Doppler), carrier→Doppler, FFT correlation. | numpy |
