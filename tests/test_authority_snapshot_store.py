@@ -524,3 +524,51 @@ def test_existing_db_gains_the_host_clock_columns_on_reopen(tmp_path):
     row = sqlite3.connect(db).execute(
         "SELECT host_clock_verdict FROM authority_snapshot").fetchone()
     assert row == ("suspect",)
+
+
+def test_counter_epoch_id_round_trips(tmp_path):
+    """v3.73 row 14: each row names the radiod counter epoch, so a day's rows
+    count the radiod re-bases."""
+    from hamsci_dsp.io.authority_snapshot_store import AuthoritySnapshotStore
+    db = tmp_path / "authority_history.db"
+    with AuthoritySnapshotStore(db) as store:
+        store.insert({"utc_published": "2026-10-19T12:00:00Z", "counter_epoch_id": "ep-1"})
+        store.insert({"utc_published": "2026-10-19T12:00:10Z", "counter_epoch_id": "ep-2"})
+        store.insert({"utc_published": "2026-10-19T12:00:20Z"})
+    rows = sqlite3.connect(db).execute(
+        "SELECT counter_epoch_id FROM authority_snapshot ORDER BY utc_published").fetchall()
+    assert rows == [("ep-1",), ("ep-2",), (None,)]
+    decl = {r[1]: r[2] for r in sqlite3.connect(db).execute(
+        "PRAGMA table_info(authority_snapshot)")}
+    assert decl["counter_epoch_id"] == "TEXT"
+
+
+def test_db_from_before_counter_epoch_id_gains_it_and_keeps_its_rows(tmp_path):
+    """A station's history DB written by the pre-v3.73 schema (every column but
+    counter_epoch_id) gains the column on open; its old rows read NULL there and
+    keep every other value, and a reader that selects only the old columns sees
+    no change."""
+    from hamsci_dsp.io.authority_snapshot_store import (
+        AuthoritySnapshotStore, COLUMNS, _column_sql)
+    db = tmp_path / "authority_history.db"
+    old_cols = [c for c in COLUMNS if c != "counter_epoch_id"]
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE authority_snapshot (" +
+                 ", ".join(_column_sql(c) for c in old_cols) + ")")
+    conn.execute("INSERT INTO authority_snapshot (utc_published, a_level, t3_offset_ms) "
+                 "VALUES ('2026-10-18T00:00:00Z', 'A2', 1.5)")
+    conn.commit()
+    conn.close()
+    with AuthoritySnapshotStore(db) as store:
+        store.insert({"utc_published": "2026-10-19T00:00:00Z", "a_level": "A2",
+                      "t3_offset_ms": 2.5, "counter_epoch_id": "ep-7"})
+    conn = sqlite3.connect(db)
+    names = [r[1] for r in conn.execute("PRAGMA table_info(authority_snapshot)")]
+    assert "counter_epoch_id" in names
+    assert conn.execute(
+        "SELECT utc_published, counter_epoch_id FROM authority_snapshot "
+        "ORDER BY utc_published").fetchall() == [
+            ("2026-10-18T00:00:00Z", None), ("2026-10-19T00:00:00Z", "ep-7")]
+    assert conn.execute(
+        "SELECT a_level, t3_offset_ms FROM authority_snapshot ORDER BY utc_published"
+    ).fetchall() == [("A2", 1.5), ("A2", 2.5)]

@@ -161,6 +161,12 @@ COLUMNS = (
     "host_clock_since_utc",
     "host_clock_t2_ms",
     "host_clock_lb1421_s",
+    # The T3 registration's counter epoch (authority.json's
+    # ``registration.counter_epoch_id``): which radiod RTP counter the
+    # registration was made against.  A change between rows marks a
+    # radiod re-base, so a day's rows count the re-bases.  NULL when no
+    # registration summary exists, and on rows written before v3.73.
+    "counter_epoch_id",
 )
 
 
