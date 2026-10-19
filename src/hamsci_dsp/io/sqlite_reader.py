@@ -148,7 +148,9 @@ class SqliteDataProductReader:
                 f"{self.table} reads will return no rows"
             )
 
-        logger.info(
+        # DEBUG, not INFO: the fusion loop builds readers every cycle,
+        # and this line ran at thousands an hour on AC0G-B4 (v3.73 row 18).
+        logger.debug(
             f"Initialized {product_level} {product_name} SQLite reader for "
             f"{channel} (schema v{self.schema['schema_version']}, "
             f"table={self.table}, present={self._table_present}, "
@@ -286,7 +288,7 @@ class SqliteDataProductReader:
 
         kept.sort(key=lambda pair: pair[0])
         result = [m for _, m in kept]
-        logger.info(
+        logger.debug(  # per-read; routine (v3.73 row 18)
             f"Read {len(result)} measurements from {start} to {end} "
             f"(quality_grade >= {min_quality_grade}, flags={quality_flags})"
         )

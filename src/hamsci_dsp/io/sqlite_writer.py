@@ -146,6 +146,7 @@ class SqliteDataProductWriter:
 
         self.schema = get_schema(product_level, product_name, version)
         self.table = _table_name(product_level, product_name)
+        self._warned_unknown_fields: set = set()
 
         # Default DB path: shared single-file across all of hf-timestd.
         self.db_path = Path(db_path) if db_path is not None else DEFAULT_DB_PATH
@@ -385,7 +386,14 @@ class SqliteDataProductWriter:
         field_schemas = {field["name"]: field for field in self.schema["fields"]}
         for field_name, value in measurement.items():
             if field_name not in field_schemas:
-                logger.warning(f"Unknown field '{field_name}' (not in schema)")
+                # A producer that sends an unknown field sends it on every
+                # write, so warn once per field per writer (v3.73 row 18).
+                if field_name not in self._warned_unknown_fields:
+                    self._warned_unknown_fields.add(field_name)
+                    logger.warning(
+                        f"Unknown field '{field_name}' (not in schema "
+                        f"{self.table}); dropped; further drops not logged"
+                    )
                 continue
             self._validate_field(field_schemas[field_name], value, field_name)
         for field in self.schema["fields"]:

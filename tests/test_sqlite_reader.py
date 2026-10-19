@@ -437,3 +437,50 @@ class TestLifecycle:
             assert reader._conn is not None
             assert len(reader.read_time_range(WIN_START, WIN_END)) == 1
         assert reader._conn is None  # close() called on __exit__
+
+
+# ---------------------------------------------------------------------
+# Journal volume (v3.73 row 18)
+# ---------------------------------------------------------------------
+
+
+class TestJournalVolume:
+    """The fusion loop builds readers and reads every cycle.
+
+    On AC0G-B4 the "Initialized ... reader" and "Read N measurements"
+    lines ran at thousands an hour.  Both describe routine work, so
+    they belong at DEBUG; INFO stays quiet.
+    """
+
+    def test_construction_and_read_log_nothing_at_info(
+        self, temp_dir, temp_db, caplog
+    ):
+        import logging
+
+        _write_rows(temp_dir, temp_db, [_row("2026-05-15T17:00:00Z")])
+        caplog.set_level(logging.INFO, logger="hamsci_dsp.io.sqlite_reader")
+        reader = _make_reader(temp_dir, temp_db)
+        try:
+            assert len(reader.read_time_range(WIN_START, WIN_END)) == 1
+        finally:
+            reader.close()
+        info = [
+            r for r in caplog.records
+            if r.name == "hamsci_dsp.io.sqlite_reader"
+            and r.levelno >= logging.INFO
+        ]
+        assert info == [], [r.getMessage() for r in info]
+
+    def test_routine_lines_still_reach_debug(self, temp_dir, temp_db, caplog):
+        import logging
+
+        _write_rows(temp_dir, temp_db, [_row("2026-05-15T17:00:00Z")])
+        caplog.set_level(logging.DEBUG, logger="hamsci_dsp.io.sqlite_reader")
+        reader = _make_reader(temp_dir, temp_db)
+        try:
+            reader.read_time_range(WIN_START, WIN_END)
+        finally:
+            reader.close()
+        text = "\n".join(r.getMessage() for r in caplog.records)
+        assert "SQLite reader for" in text
+        assert "Read 1 measurements" in text

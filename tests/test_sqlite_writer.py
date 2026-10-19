@@ -714,3 +714,35 @@ class TestRetiredRequiredColumns:
         tmp = conn.execute("SELECT name FROM sqlite_master WHERE name LIKE '%__relax_tmp'").fetchall()
         conn.close()
         assert n == 1 and tmp == []
+
+
+# ---------------------------------------------------------------------
+# Journal volume (v3.73 row 18)
+# ---------------------------------------------------------------------
+
+
+class TestUnknownFieldWarnsOnce:
+    """A producer that sends an unknown field sends it on every write.
+
+    On AC0G-B4 metrology logged "Unknown field 'processed_at'" about
+    110 times an hour per channel.  The writer now warns once per
+    field, and the warning says so.
+    """
+
+    def test_repeated_unknown_field_warns_once(
+        self, temp_dir, temp_db, sample_l2_measurement, caplog
+    ):
+        import logging
+
+        writer = _make_writer(temp_dir, temp_db)
+        caplog.set_level(logging.WARNING, logger="hamsci_dsp.io.sqlite_writer")
+        try:
+            for _ in range(5):
+                m = dict(sample_l2_measurement)
+                m["not_a_field"] = 1
+                writer.validate_measurement(m)
+        finally:
+            writer.close()
+        hits = [r for r in caplog.records if "not_a_field" in r.getMessage()]
+        assert len(hits) == 1
+        assert hits[0].levelno == logging.WARNING
