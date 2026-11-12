@@ -62,9 +62,18 @@ _CAPTURE_DEFAULTS = dict(
     engineering=None)
 
 
-def group_key(centre_hz: float, rate_hz_per_s: float) -> str:
-    """The sweep group's name, as sigmondb's back-fill writes it."""
-    return f"{centre_hz / 1e6:.4f} {rate_hz_per_s / 1e3:+.2f}"
+def group_key(centre_hz: float, rate_hz_per_s: float, period_s: float = 1.0) -> str:
+    """The sweep group's name: centre, sweep rate and, unless 1 s, the period.
+
+    The rate alone does not separate radars: 49.63 kHz swept 4 times a second
+    and 99.26 kHz swept twice give the same Hz/s, but their periods (0.25 s,
+    0.5 s) fold delays differently (Troyer et al. 2025, Table 1: SCRZ against
+    the 13.5 MHz group).  A 1 s sweep keeps the back-fill's form, so the
+    4.46 MHz history runs on unchanged."""
+    key = f"{centre_hz / 1e6:.4f} {rate_hz_per_s / 1e3:+.2f}"
+    if abs(period_s - 1.0) > 1e-9:
+        key += f" {period_s:g}s"
+    return key
 
 
 def split_arrival(epoch_ns: int, period_s: float) -> Tuple[str, int]:

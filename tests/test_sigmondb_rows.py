@@ -19,6 +19,16 @@ def test_group_key_matches_the_backfill_format():
     assert sr.group_key(13_487_500.0, -49_629.688) == "13.4875 -49.63"
 
 
+def test_the_period_separates_radars_with_the_same_sweep_rate():
+    # Troyer et al. 2025 Table 1: SCRZ sweeps 49.63 kHz at 4 Hz, the 13.5 MHz
+    # group 99.26 kHz at 2 Hz -- both -198.5 kHz/s.
+    scrz = sr.group_key(13_500_000.0, -49_630 * 4, period_s=0.25)
+    estr = sr.group_key(13_500_000.0, -99_259 * 2, period_s=0.5)
+    assert scrz != estr
+    assert scrz == "13.5000 -198.52 0.25s"
+    assert sr.group_key(4_463_000.0, -25_733.913, period_s=1.0) == "4.4630 -25.73"
+
+
 def test_delay_is_the_phase_within_the_period_from_the_utc_second():
     # An arrival 0.25 s after 12:00:07 on a 1 s sweep sits 250 ms into its period.
     t = int(datetime(2026, 11, 12, 12, 0, 7, tzinfo=timezone.utc).timestamp()) * 10**9 + 250_000_123
