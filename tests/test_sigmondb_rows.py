@@ -73,3 +73,17 @@ def test_rows_hold_exactly_the_columns_in_order():
 def test_an_unknown_column_is_refused():
     with pytest.raises(TypeError):
         sr.arrival_row(time="2026-11-12T12:00:07Z", reporter_id="X", bogus=1)
+
+
+def test_a_gated_wideband_sweep_gets_its_own_group():
+    # An ionosonde sweeping 2-30 MHz at 100 kHz/s: 280 s of every 300 s.
+    key = sr.group_key(16_000_000.0, 100_000.0, period_s=300.0, sweep_s=280.0)
+    assert key == "16.0000 +100.00 300s sweep280s"
+    assert sr.group_key(16_000_000.0, 100_000.0, period_s=300.0, sweep_s=300.0) == \
+        "16.0000 +100.00 300s"
+
+
+def test_an_arrival_names_the_frequency_its_delay_belongs_to():
+    a = sr.arrival_row(time="2026-11-12T12:00:07Z", reporter_id="X", freq_hz=7_150_000.0)
+    assert a["freq_hz"] == 7_150_000.0
+    assert sr.arrival_row(time="2026-11-12T12:00:07Z", reporter_id="X")["freq_hz"] is None

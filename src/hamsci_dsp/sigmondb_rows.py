@@ -1,7 +1,10 @@
 """The sigmondb chirp row: one definition for every program that writes one.
 
 sigmondb (wsprdaemon-server, package ``sigmondb``) keeps chirp receptions in two
-tables, ``arrival`` and ``capture``.  Its ingest never asks which program wrote
+tables, ``arrival`` and ``capture``.  "Chirp" means any swept or keyed source:
+CODAR and other HF radars, ionosondes and chirpsounders sweeping MHz, HFDL's
+keyed frames, chirps nobody has identified yet.  Nothing here assumes CODAR;
+codar-sounder's own detection lives in codar-sounder.  Its ingest never asks which program wrote
 a row, so the row forms the contract between a station and sigmondb.
 codar-sounder writes these rows now; chirp-recorder writes the same rows once
 radiod's de-chirp channel lands.  Both take the definition from here, so a
@@ -21,7 +24,11 @@ Three conventions carry that history, and the back-fill already fixed them
   the block sigmondb's solver counts (u_epoch_ns set and at most 1000 ns).
 
 ARRIVAL_COLUMNS and CAPTURE_COLUMNS copy sigmondb's ddl.COLUMNS, less
-``received_at``, which the server stamps.  hfdl-recorder keeps its own copy
+``received_at``, which the server stamps.  ``freq_hz`` names the frequency at
+which an arrival's delay was measured: the centre for a narrow sweep, the
+instantaneous frequency of the reflection for a wideband one, whose delay
+changes along the sweep (an ionogram trace).  A server older than the column
+drops it with one warning and keeps the row.  hfdl-recorder keeps its own copy
 (hfdl_recorder.timing.sigmondb_rows) for now; the two agree column for column.
 """
 from __future__ import annotations
@@ -40,7 +47,7 @@ T6_ORIGIN = "t6_anchor"
 
 ARRIVAL_COLUMNS = (
     "time", "reporter_id", "tx_id", "group_key", "centre_hz", "rate_hz_per_s", "delay_ns",
-    "delay_sigma_ns", "level_db", "margin_db", "half_band_db", "clean_tag", "doppler_hz",
+    "delay_sigma_ns", "freq_hz", "level_db", "margin_db", "half_band_db", "clean_tag", "doppler_hz",
     "phase_rate", "carrier_phase_rad", "s4", "sigma_phi_rad", "detector_version",
     "schema_version", "u_epoch_ns", "k", "p", "a_level", "a_level_provenance",
     "counter_epoch_id", "origin", "engineering")
@@ -52,7 +59,7 @@ CAPTURE_COLUMNS = (
 
 _ARRIVAL_DEFAULTS = dict(
     time=None, reporter_id="", tx_id="", group_key="", centre_hz=0.0, rate_hz_per_s=0.0,
-    delay_ns=0, delay_sigma_ns=None, level_db=0.0, margin_db=None, half_band_db=None,
+    delay_ns=0, delay_sigma_ns=None, freq_hz=None, level_db=0.0, margin_db=None, half_band_db=None,
     clean_tag="A", doppler_hz=None, phase_rate=None, carrier_phase_rad=None, s4=None,
     sigma_phi_rad=None, detector_version="", schema_version=SCHEMA_VERSION, engineering=None)
 _CAPTURE_DEFAULTS = dict(
@@ -62,17 +69,23 @@ _CAPTURE_DEFAULTS = dict(
     engineering=None)
 
 
-def group_key(centre_hz: float, rate_hz_per_s: float, period_s: float = 1.0) -> str:
-    """The sweep group's name: centre, sweep rate and, unless 1 s, the period.
+def group_key(centre_hz: float, rate_hz_per_s: float, period_s: float = 1.0,
+              sweep_s: Optional[float] = None) -> str:
+    """A sweep group's name, from what a receiver can measure of any chirp:
+    the sweep's centre (the middle of its span), its rate, its repetition
+    period unless 1 s, and its sweep duration when shorter than the period.
 
-    The rate alone does not separate radars: 49.63 kHz swept 4 times a second
-    and 99.26 kHz swept twice give the same Hz/s, but their periods (0.25 s,
-    0.5 s) fold delays differently (Troyer et al. 2025, Table 1: SCRZ against
-    the 13.5 MHz group).  A 1 s sweep keeps the back-fill's form, so the
+    The rate alone does not separate sources: 49.63 kHz swept 4 times a
+    second and 99.26 kHz swept twice give the same Hz/s but fold delays into
+    0.25 s and 0.5 s periods (Troyer et al. 2025, Table 1).  A gated sweep,
+    such as an ionosonde sweeping 2-30 MHz for 280 s every 300 s, needs its
+    duration too.  A continuous 1 s sweep keeps the back-fill's form, so the
     4.46 MHz history runs on unchanged."""
     key = f"{centre_hz / 1e6:.4f} {rate_hz_per_s / 1e3:+.2f}"
     if abs(period_s - 1.0) > 1e-9:
         key += f" {period_s:g}s"
+    if sweep_s is not None and sweep_s < period_s - 1e-9:
+        key += f" sweep{sweep_s:g}s"
     return key
 
 
