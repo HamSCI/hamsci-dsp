@@ -209,7 +209,10 @@ class SqliteDataProductWriter:
                 # Already injected as the leading column.
                 continue
             sql_type = _sqlite_type_for_field(field)
-            required = field.get("required", False)
+            # A field that may hold NaN cannot be NOT NULL: sqlite3 binds float('nan') as
+            # NULL.  L3_physics.utc_offset_ms (required, allow_nan) failed every minute whenever no
+            # TEC fit gave a clock intercept (fleet, 2026-11-13).
+            required = field.get("required", False) and field.get("allow_nan") is not True
             null_clause = " NOT NULL" if required else ""
             cols.append(f"{name} {sql_type}{null_clause}")
 
@@ -301,7 +304,10 @@ class SqliteDataProductWriter:
         cur = self._conn.execute(f"PRAGMA table_info({self.table})")
         info = cur.fetchall()  # (cid, name, type, notnull, dflt_value, pk)
         schema_names = {f["name"] for f in self.schema["fields"]} | {"channel"}
-        retired = [row[1] for row in info if row[3] and row[1] not in schema_names]
+        # Also any field the schema lets hold NaN: NaN arrives as NULL (see _ensure_table).
+        nan_ok = {f["name"] for f in self.schema["fields"] if f.get("allow_nan") is True}
+        retired = [row[1] for row in info
+                   if row[3] and (row[1] not in schema_names or row[1] in nan_ok)]
         if not retired:
             return
 

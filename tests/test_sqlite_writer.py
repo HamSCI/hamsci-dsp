@@ -746,3 +746,55 @@ class TestUnknownFieldWarnsOnce:
         hits = [r for r in caplog.records if "not_a_field" in r.getMessage()]
         assert len(hits) == 1
         assert hits[0].levelno == logging.WARNING
+
+
+class TestNaNAllowedRequiredColumns:
+    """L3_physics.utc_offset_ms is required with allow_nan.  sqlite3 binds float('nan') as NULL, so
+    the NOT NULL the writer used to give it refused every summary without a clock intercept: the
+    physics page went stale on most stations (2026-11-13)."""
+
+    def _old_physics_table(self, temp_db):
+        table = "L3_physics"
+        conn = sqlite3.connect(str(temp_db))
+        conn.execute(
+            f"CREATE TABLE {table} (channel TEXT NOT NULL, timestamp_utc TEXT NOT NULL, "
+            "minute_boundary_utc INTEGER NOT NULL, stations_used TEXT NOT NULL, "
+            "utc_offset_ms REAL NOT NULL, utc_uncertainty_ms REAL NOT NULL, "
+            "utc_consistency_flag INTEGER NOT NULL, processing_version TEXT NOT NULL, "
+            "processed_at TEXT NOT NULL)"
+        )
+        conn.commit()
+        conn.close()
+        return table
+
+    def _row(self):
+        return {"timestamp_utc": "2026-11-13T02:00:00Z", "minute_boundary_utc": 1794535200,
+                "stations_used": "WWV", "utc_offset_ms": float("nan"),
+                "utc_uncertainty_ms": float("nan"), "utc_consistency_flag": False,
+                "processing_version": "test", "processed_at": "2026-11-13T02:00:01Z"}
+
+    def test_an_old_table_takes_a_nan_offset_after_migration(self, temp_dir, temp_db):
+        table = self._old_physics_table(temp_db)
+        writer = _make_writer(temp_dir, temp_db, product="physics", level="L3", channel="global")
+        try:
+            writer.write_measurement(self._row())
+            writer.flush() if hasattr(writer, "flush") else None
+            conn = sqlite3.connect(str(temp_db))
+            info = {r[1]: r for r in conn.execute(f"PRAGMA table_info({table})")}
+            n = conn.execute(f"SELECT COUNT(*) FROM {table} WHERE utc_offset_ms IS NULL").fetchone()[0]
+            conn.close()
+            assert info["utc_offset_ms"][3] == 0 and info["utc_uncertainty_ms"][3] == 0
+            assert info["timestamp_utc"][3] == 1          # fields without allow_nan keep NOT NULL
+            assert n == 1
+        finally:
+            writer.close()
+
+    def test_a_new_table_is_created_nullable_for_nan_fields(self, temp_dir, temp_db):
+        writer = _make_writer(temp_dir, temp_db, product="physics", level="L3", channel="global")
+        try:
+            conn = sqlite3.connect(str(temp_db))
+            info = {r[1]: r for r in conn.execute("PRAGMA table_info(L3_physics)")}
+            conn.close()
+            assert info["utc_offset_ms"][3] == 0
+        finally:
+            writer.close()
