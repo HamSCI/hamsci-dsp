@@ -105,6 +105,14 @@ def _try_import_pylap() -> bool:
     import importlib.util
     if importlib.util.find_spec('pylap') is None:
         _prepend_pylap_modules()
+    # PHaRLAP's IRI grid needs DIR_MODELS_REF_DAT, and nothing on a station set it (no unit, no
+    # client): every trace fell back to geometry ("the environment variable DIR_MODELS_REF_DAT
+    # must be defined", SIGMA 2026-11-13).  Default both to the standard install when it exists;
+    # an operator's own values win.
+    home = os.environ.get('PHARLAP_HOME', '/opt/pharlap_4.7.4')
+    if os.path.isdir(os.path.join(home, 'dat')):
+        os.environ.setdefault('PHARLAP_HOME', home)
+        os.environ.setdefault('DIR_MODELS_REF_DAT', os.path.join(home, 'dat'))
 
     try:
         import importlib
