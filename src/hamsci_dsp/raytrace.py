@@ -58,7 +58,9 @@ import logging
 import math
 import multiprocessing as mp
 import os
+import queue as queue_mod
 import sys
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -163,13 +165,16 @@ def _raytrace_worker(queue, fn_args):
         if _pylap_raytrace_2d is None:
             queue.put(('err', 'pylap.raytrace_2d unavailable in subprocess'))
             return
-        result = _pylap_raytrace_2d(*fn_args)
-        queue.put(('ok', result))
+        ray_list, _ray_paths, _ray_states = _pylap_raytrace_2d(*fn_args)
+        # Only the ray list crosses back.  Nothing reads the paths or states,
+        # and they are most of the bytes (6.1 MB of a 117-ray fan on SIGMA).
+        queue.put(('ok', (ray_list, None, None)))
     except Exception as exc:
         queue.put(('err', str(exc)))
 
 
-def _raytrace_with_timeout(args, timeout_s=RAYTRACE_TIMEOUT_S):
+def _raytrace_with_timeout(args, timeout_s=RAYTRACE_TIMEOUT_S,
+                           _target=None):
     """Run raytrace_2d in a subprocess with a hard timeout.
 
     PHaRLAP's Fortran ODE solver can enter runaway loops for certain
@@ -184,29 +189,51 @@ def _raytrace_with_timeout(args, timeout_s=RAYTRACE_TIMEOUT_S):
     interpreter; the child re-imports this module, so ``_try_import_pylap``
     repopulates ``_pylap_raytrace_2d`` and ``_raytrace_worker`` resolves
     it locally rather than receiving it (unpicklable) over the boundary.
+
+    The parent READS the queue before it joins the child.  A child that has
+    put a result larger than the pipe buffer cannot exit until someone reads
+    it, so join-then-read waits out the whole timeout (2026-11-13, SIGMA: a
+    0.04 s trace returned after 120 s as a timeout, every time).
+
+    ``_target`` replaces the worker in tests.
     """
     ctx = mp.get_context('spawn')
     q = ctx.Queue(maxsize=1)
 
-    proc = ctx.Process(target=_raytrace_worker, args=(q, args),
+    proc = ctx.Process(target=_target or _raytrace_worker, args=(q, args),
                        daemon=True)
     proc.start()
-    proc.join(timeout=timeout_s)
-
-    if proc.is_alive():
-        logger.warning("raytrace_2d timed out after %ds — killing subprocess",
-                       timeout_s)
-        proc.terminate()
-        proc.join(timeout=5)
+    deadline = time.monotonic() + timeout_s
+    item = None
+    try:
+        while item is None:
+            try:
+                item = q.get(timeout=0.25)
+            except queue_mod.Empty:
+                if not proc.is_alive():
+                    # The child may have put its result just before exiting.
+                    try:
+                        item = q.get(timeout=1.0)
+                    except queue_mod.Empty:
+                        raise RuntimeError(
+                            "raytrace_2d subprocess exited without result "
+                            f"(exit code {proc.exitcode})") from None
+                elif time.monotonic() >= deadline:
+                    logger.warning("raytrace_2d timed out after %ds — "
+                                   "killing subprocess", timeout_s)
+                    raise TimeoutError(
+                        f"raytrace_2d exceeded {timeout_s}s timeout")
+    finally:
+        if item is not None:
+            proc.join(timeout=5)  # result in hand: the child exits on its own
         if proc.is_alive():
-            proc.kill()
-            proc.join(timeout=2)
-        raise TimeoutError(f"raytrace_2d exceeded {timeout_s}s timeout")
+            proc.terminate()
+            proc.join(timeout=5)
+            if proc.is_alive():
+                proc.kill()
+                proc.join(timeout=2)
 
-    if q.empty():
-        raise RuntimeError("raytrace_2d subprocess exited without result")
-
-    tag, payload = q.get_nowait()
+    tag, payload = item
     if tag == 'err':
         raise RuntimeError(f"raytrace_2d failed: {payload}")
     return payload
