@@ -97,13 +97,14 @@ def _try_import_pylap() -> bool:
     """
     global _PYLAP_AVAILABLE, _PYLAP_ERROR, _pylap_raytrace_2d, _pylap_iri2016
 
-    pylap_path = os.environ.get('PYLAP_MODULES',
-                                os.path.join(os.path.dirname(__file__),
-                                             '..', '..', '..', '..', '..',
-                                             'pylap', 'modules'))
-    pylap_path = os.path.realpath(pylap_path)
-    if pylap_path not in sys.path and os.path.isdir(pylap_path):
-        sys.path.insert(0, pylap_path)
+    # An installed, built pyLAP comes first.  ensure-pylap.sh builds it into the venv, while
+    # /opt/pylap/modules (the derived fallback below) holds the uncompiled source tree:
+    # putting that first made every station import the source, fail on its missing compiled
+    # extension ("name '_mod' is not defined"), and fall back to geometry (SIGMA, ND, B2,
+    # B4, 2026-11-13).  The source path serves only when nothing is installed.
+    import importlib.util
+    if importlib.util.find_spec('pylap') is None:
+        _prepend_pylap_modules()
 
     try:
         import importlib
@@ -121,6 +122,17 @@ def _try_import_pylap() -> bool:
         _pylap_iri2016 = None  # raytrace still works; IRI grid falls back
 
     return True
+
+
+def _prepend_pylap_modules() -> None:
+    """Put PHaRLAP's standalone pyLAP tree on sys.path (PYLAP_MODULES, or the derived default)."""
+    pylap_path = os.environ.get('PYLAP_MODULES',
+                                os.path.join(os.path.dirname(__file__),
+                                             '..', '..', '..', '..', '..',
+                                             'pylap', 'modules'))
+    pylap_path = os.path.realpath(pylap_path)
+    if pylap_path not in sys.path and os.path.isdir(pylap_path):
+        sys.path.insert(0, pylap_path)
 
 
 _try_import_pylap()
