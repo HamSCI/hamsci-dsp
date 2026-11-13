@@ -24,7 +24,10 @@ hamsci-dsp = { path = "../hamsci-dsp", editable = true }
 | `hamsci_dsp.dsp` | canonical peak SNR (Rayleigh/​signed), robust noise floor, `CoherentStack` (slow-time range-Doppler), carrier→Doppler, FFT correlation. | numpy |
 | `hamsci_dsp.propagation` | **path observables**: `carrier` (phase→dTEC, dTEC/dt), `oblique` (virtual height, equivalent vertical freq, MUF, obliquity), `scintillation` (S4, σφ — ITU-R P.531). | numpy |
 | `hamsci_dsp.ionosphere` | solar position/zenith (dep-free) + `ionosphere_state` (IRI when available, parametric fallback). | numpy; `iono` extra → `iri2020` |
-| `hamsci_dsp.raytrace` | `RaytraceEngine` — lazy PyLAP/PHaRLAP wrapper (advisory; no-op when absent). | `raytrace` extra → `pylap` (+ PHaRLAP) |
+| `hamsci_dsp.raytrace` | `RaytraceEngine` — lazy PyLAP/PHaRLAP wrapper (advisory; no-op when absent). It imports the pyLAP installed in the venv first and falls back to `/opt/pylap/modules` only when none is installed. When `/opt/pharlap_4.7.4/dat` exists it sets `PHARLAP_HOME` and `DIR_MODELS_REF_DAT` to the standard install; an operator's own values win. | `raytrace` extra → `pylap` (+ PHaRLAP) |
+| `hamsci_dsp.io` | the schema-driven SQLite writer and reader behind hf-timestd's `timestd.db`. A field whose schema says `allow_nan: true` stays nullable, since SQLite stores NaN as NULL; the writer relaxes such columns on existing tables too. | numpy |
+| `hamsci_dsp.sigmondb_rows` | the sigmondb chirp row (`arrival` and `capture` tables) that codar-sounder writes, one definition for every program that writes one. | stdlib |
+| `hamsci_dsp.counter_map` | `CounterMap`: maps one channel's RTP counter to radiod's input-sample index, which every channel of one radiod run shares. | stdlib |
 
 `timing`, `constants`, `geometry`, `dsp`, and `propagation` are extracted
 math-identical from the clients (the `authority.json` schema is owned by
